@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mirror Shard Image Transform</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="container">
+        <canvas id="canvas"></canvas>
+        <div id="controls">
+            <h2>Controls</h2>
+            <label>
+                Source Image:
+                <select id="imageSelect">
+                    <option value="grid.jpg">grid.jpg</option>
+                    <option value="grid-1.jpg">grid-1.jpg</option>
+                    <option value="grid-2.jpg">grid-2.jpg</option>
+                    <option value="grid-w.jpg">grid-w.jpg</option>
+                    <option value="left.jpg">left.jpg</option>
+                    <option value="left-1.jpg">left-1.jpg</option>
+                    <option value="right.jpg">right.jpg</option>
+                    <option value="right-1.jpg">right-1.jpg</option>
+                    <option value="right-2.jpg">right-2.jpg</option>
+                    <option value="right-photo.jpg">right-photo.jpg</option>
+                    <option value="right-w.jpg">right-w.jpg</option>
+                </select>
+            </label>
+            <label>
+                Show Debug View:
+                <input type="checkbox" id="debugView">
+            </label>
+            <label>
+                Show All Shards:
+                <input type="checkbox" id="showAllShards" checked>
+            </label>
+            <label>
+                Current Shard:
+                <input type="number" id="currentShard" value="0" min="0" max="13">
+            </label>
+            <label>
+                Background Color:
+                <input type="color" id="bgColor" value="#000000">
+            </label>
+            <label>
+                Background Alpha:
+                <input type="range" id="bgAlpha" value="0" min="0" max="1" step="0.01">
+                <span id="bgAlphaValue">0</span>
+            </label>
+            <div id="info">
+                <p>FPS: <span id="fps">0</span></p>
+                <p>Shards Loaded: <span id="shardCount">0</span></p>
+            </div>
+        </div>
+    </div>
+    <script src="shader.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
+
