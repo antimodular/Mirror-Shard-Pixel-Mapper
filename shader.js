@@ -85,44 +85,12 @@ mat4 getInvH(int index) {
 }
 
 // Transform a point from display space to camera space
-// Note: The uniform is called "invH" but we're actually passing inverseHomography
-// which transforms from camera to display. To go from display to camera, we need
-// to invert it (i.e., apply the original homography).
-// However, since we computed inverseHomography from homography in JS, we need to
-// invert it back here. Actually wait - let me reconsider...
-
-// Actually, if inverseHomography transforms camera -> display, then to go
-// display -> camera, we apply inverseHomography directly but inverted.
-// Since we have invH (which is inverseHomography), we compute its inverse.
-vec2 transformDisplayToCamera(vec2 displayPoint, mat4 invH) {
+// We receive H (homography) which transforms display -> camera directly
+vec2 transformDisplayToCamera(vec2 displayPoint, mat4 H) {
     // Convert display point to homogeneous coordinates
     vec4 p = vec4(displayPoint.x, displayPoint.y, 0.0, 1.0);
     
-    // We need to invert invH to get H (the original homography)
-    // Extract 2D homography components (3x3 from 4x4, ignoring z components)
-    float a = invH[0][0], b = invH[0][1], c = invH[0][3];  // row 0: a, b, 0, c
-    float d = invH[1][0], e = invH[1][1], f = invH[1][3];  // row 1: d, e, 0, f  
-    float g = invH[3][0], h = invH[3][1], i = invH[3][3];  // row 3: g, h, 0, i
-    
-    // Determinant of the 3x3 matrix [a b c; d e f; g h i]
-    float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    
-    // Build inverse matrix (which gives us the original homography H)
-    mat4 H = mat4(1.0);
-    if (abs(det) > 0.0001) {
-        float invDet = 1.0 / det;
-        H[0][0] = (e * i - f * h) * invDet;
-        H[0][1] = (c * h - b * i) * invDet;
-        H[0][3] = (b * f - c * e) * invDet;
-        H[1][0] = (f * g - d * i) * invDet;
-        H[1][1] = (a * i - c * g) * invDet;
-        H[1][3] = (c * d - a * f) * invDet;
-        H[3][0] = (d * h - e * g) * invDet;
-        H[3][1] = (g * b - a * h) * invDet;
-        H[3][3] = (a * e - b * d) * invDet;
-    }
-    
-    // Apply the homography H (which transforms display -> camera)
+    // Apply the homography matrix directly (transforms display -> camera)
     vec4 result = H * p;
     
     // Convert back to Cartesian coordinates with perspective division
@@ -143,10 +111,11 @@ void main() {
     // Make sure we have a valid shard index
     if (s >= 0 && s < u_numShards) {
         // Get the appropriate homography matrix for this shard
-        mat4 invH = getInvH(s);
+        // This matrix transforms display -> camera directly
+        mat4 H = getInvH(s);
         
-        // Map this display space coordinate back to camera space for texturing
-        vec2 cameraCoord = transformDisplayToCamera(fragCoord, invH);
+        // Map this display space coordinate to camera space for texturing
+        vec2 cameraCoord = transformDisplayToCamera(fragCoord, H);
         
         // Convert camera coordinates to normalized texture coordinates
         vec2 normalizedTexCoord = cameraCoord / u_resolution;

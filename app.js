@@ -1,6 +1,7 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
+const VERSION = '2.1';
 
 // Global state
 let gl;
@@ -13,6 +14,8 @@ let debugView = false;
 let showAllShards = true;
 let currentShardIndex = 0;
 let bgColor = { r: 0, g: 0, b: 0, a: 0 };
+let shardVisibility = {}; // Object to track visibility of each shard
+let gui;
 
 // Homography computation (ported from ofxHomography.h)
 function gaussianElimination(input, n) {
@@ -251,6 +254,13 @@ async function loadAllShards() {
         const shard = await loadShard(`shard${i}`);
         if (shard && shard.homographyReady) {
             shards.push(shard);
+            // Initialize visibility for this shard
+            if (shardVisibility[`shard${i}`] === undefined) {
+                shardVisibility[`shard${i}`] = true;
+            }
+        } else {
+            // Shard not loaded, disable it
+            shardVisibility[`shard${i}`] = false;
         }
     }
     console.log(`Loaded ${shards.length} shards`);
@@ -472,6 +482,7 @@ function render() {
     gl.clearColor(bg.r, bg.g, bg.b, bg.a);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
     
+    // Calculate how many shards to potentially render (before visibility filtering)
     const numShardsToRender = showAllShards ? Math.min(14, shards.length) : 1;
     
     // First pass: Draw masks to stencil buffer
@@ -480,22 +491,27 @@ function render() {
     gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
     
     // Draw each shard's mask to stencil
-    // Important: Use sequential indices (s) for stencil values, but map to actual shard indices
+    // Important: Track which shards are actually rendered for visibility control
+    const visibleShards = [];
+    let visibleIndex = 0;
+    
     for (let s = 0; s < numShardsToRender; s++) {
         const shardIndex = showAllShards ? s : currentShardIndex;
         if (shardIndex >= shards.length) continue;
         
+        // Check visibility
+        const shardKey = `shard${shardIndex}`;
+        if (shardVisibility[shardKey] === false) {
+            continue; // Skip this shard if it's disabled
+        }
+        
         const shard = shards[shardIndex];
         if (shard.transformedMaskPoints && shard.transformedMaskPoints.length >= 3) {
-            // Log first few points to verify they're reasonable
-            if (s === 0 && shard.transformedMaskPoints.length > 0) {
-                const p0 = shard.transformedMaskPoints[0];
-                console.log(`Shard ${shardIndex} first mask point: (${p0.x.toFixed(1)}, ${p0.y.toFixed(1)})`);
-            }
-            
-            // Use s+1 as stencil value (0 is reserved for background)
-            // This matches the shader rendering loop where we check for gl.EQUAL, s+1
-            drawPolygonToStencil(shard.transformedMaskPoints, s + 1);
+            // Use visibleIndex+1 as stencil value (0 is reserved for background)
+            // This matches the shader rendering loop where we check for gl.EQUAL
+            drawPolygonToStencil(shard.transformedMaskPoints, visibleIndex + 1);
+            visibleShards.push({ shardIndex: shardIndex, stencilValue: visibleIndex + 1, arrayIndex: s });
+            visibleIndex++;
         } else {
             console.warn(`Shard ${shardIndex} has invalid mask points:`, shard.transformedMaskPoints ? shard.transformedMaskPoints.length : 'null');
         }
@@ -508,6 +524,9 @@ function render() {
     
     // Second pass: Render with shader
     gl.useProgram(shaderInfo.program);
+    
+    // Update numShards uniform based on visible shards
+    gl.uniform1i(shaderInfo.uniformLocations.numShards, visibleShards.length);
     
     // Set up attributes
     gl.bindBuffer(gl.ARRAY_BUFFER, shaderInfo.positionBuffer);
@@ -525,54 +544,52 @@ function render() {
     
     // Set uniforms
     gl.uniform2f(shaderInfo.uniformLocations.resolution, sourceTexture.width, sourceTexture.height);
-    gl.uniform1i(shaderInfo.uniformLocations.numShards, numShardsToRender);
     gl.uniform1i(shaderInfo.uniformLocations.debugView, debugView ? 1 : 0);
     
     gl.uniform4f(shaderInfo.uniformLocations.bgColor, bg.r, bg.g, bg.b, bg.a);
     
-    // Set homography matrices - IMPORTANT: matrix slot 's' must contain shard[shardIndex]'s matrix
-    // because in the render loop, we set currentShardIndex to 's' and shader uses getInvH(s)
+    // Update numShards uniform based on visible shards
+    gl.uniform1i(shaderInfo.uniformLocations.numShards, visibleShards.length);
+    
+    // Set homography matrices - IMPORTANT: we pass homography directly (display->camera transform)
+    // This avoids the double-inversion issue and should be more accurate
     const matrixNames = ['invH0', 'invH1', 'invH2', 'invH3', 'invH4', 'invH5', 'invH6', 
                          'invH7', 'invH8', 'invH9', 'invH10', 'invH11', 'invH12', 'invH13'];
     
-    for (let s = 0; s < numShardsToRender; s++) {
-        const shardIndex = showAllShards ? s : currentShardIndex;
-        if (shardIndex >= shards.length) continue;
-        
-        const shard = shards[shardIndex];
-        const matrixLoc = shaderInfo.uniformLocations[matrixNames[s]];
+    // Set matrices only for visible shards
+    for (let i = 0; i < visibleShards.length; i++) {
+        const visibleShard = visibleShards[i];
+        const shard = shards[visibleShard.shardIndex];
+        const matrixLoc = shaderInfo.uniformLocations[matrixNames[i]];
         if (matrixLoc && matrixLoc !== -1) {
-            gl.uniformMatrix4fv(matrixLoc, false, shard.inverseHomography);
+            // Pass homography directly (display -> camera transform)
+            // We need to transform fragCoord (display space) to texture coords (camera space)
+            gl.uniformMatrix4fv(matrixLoc, false, shard.homography);
         } else {
-            console.error(`Matrix location for ${matrixNames[s]} not found!`);
+            console.error(`Matrix location for ${matrixNames[i]} not found!`);
         }
     }
     
-    // Render each shard
-    // Use the same loop structure as mask drawing to ensure shard index matches stencil value
-    for (let s = 0; s < numShardsToRender; s++) {
-        const shardIndex = showAllShards ? s : currentShardIndex;
-        if (shardIndex >= shards.length) continue;
-        
-        const shard = shards[shardIndex];
-        
-        // Set which shard matrix to use (this maps to invH0, invH1, etc. in shader)
-        // The matrix for slot 's' should already be set to shard's inverseHomography from above
-        const currentShardLoc = shaderInfo.uniformLocations.currentShardIndex;
-        if (currentShardLoc === -1) {
-            console.error('currentShardIndex uniform location not found!');
-            continue;
+    // Render each visible shard
+    const currentShardLoc = shaderInfo.uniformLocations.currentShardIndex;
+    if (currentShardLoc === -1) {
+        console.error('currentShardIndex uniform location not found!');
+    } else {
+        for (let i = 0; i < visibleShards.length; i++) {
+            const visibleShard = visibleShards[i];
+            const shard = shards[visibleShard.shardIndex];
+            
+            // Set which shard matrix to use (this maps to invH0, invH1, etc. in shader)
+            gl.uniform1i(currentShardLoc, i);
+            
+            // Only render pixels where stencil equals the stencil value we set in mask pass
+            gl.stencilFunc(gl.EQUAL, visibleShard.stencilValue, 0xFF);
+            gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+            
+            // Draw fullscreen quad - stencil test will limit rendering to mask area
+            // The shader will use matrix slot 'i' which contains this shard's transformation
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
-        gl.uniform1i(currentShardLoc, s);
-        
-        // Only render pixels where stencil equals s+1 (matching what we set in mask pass)
-        // This ensures each shard only renders within its mask area
-        gl.stencilFunc(gl.EQUAL, s + 1, 0xFF);
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-        
-        // Draw fullscreen quad - stencil test will limit rendering to mask area
-        // The shader will use matrix slot 's' which contains this shard's transformation
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     
     // Reset stencil function (though we disable it next anyway)
@@ -585,6 +602,9 @@ function render() {
 
 // Setup controls
 function setupControls() {
+    // Update version display
+    document.getElementById('version').textContent = `v${VERSION}`;
+    
     const imageSelect = document.getElementById('imageSelect');
     imageSelect.addEventListener('change', async (e) => {
         currentImagePath = `bin/data/images-4k/${e.target.value}`;
@@ -616,6 +636,84 @@ function setupControls() {
     });
 }
 
+// Setup dat.GUI controls
+function setupDatGUI() {
+    // Wait a bit for dat.GUI to load if needed
+    if (typeof dat === 'undefined') {
+        console.warn('dat.GUI not loaded yet, will retry...');
+        setTimeout(setupDatGUI, 100);
+        return;
+    }
+    
+    try {
+        gui = new dat.GUI({ autoPlace: false });
+        const container = document.body;
+        container.appendChild(gui.domElement);
+        
+        gui.domElement.style.position = 'fixed';
+        gui.domElement.style.top = '50px';
+        gui.domElement.style.right = '10px';
+        gui.domElement.style.zIndex = '10000';
+        
+        console.log('dat.GUI initialized successfully');
+        
+        // Add other controls to GUI
+        const mainFolder = gui.addFolder('Main Controls');
+        const guiControls = {
+            debugView: debugView,
+            showAllShards: showAllShards
+        };
+        
+        mainFolder.add(guiControls, 'debugView').name('Debug View').onChange((val) => {
+            debugView = val;
+            const checkbox = document.getElementById('debugView');
+            if (checkbox) checkbox.checked = val;
+        });
+        mainFolder.add(guiControls, 'showAllShards').name('Show All Shards').onChange((val) => {
+            showAllShards = val;
+            const checkbox = document.getElementById('showAllShards');
+            if (checkbox) checkbox.checked = val;
+        });
+        mainFolder.open();
+    } catch (e) {
+        console.error('Error setting up dat.GUI:', e);
+    }
+}
+
+// Update dat.GUI with shard controls after shards are loaded
+function updateDatGUIShards() {
+    if (!gui) {
+        console.warn('GUI not initialized, cannot update shard controls');
+        return;
+    }
+    
+    try {
+        // Remove existing shard folder if it exists
+        const folders = gui.__folders || {};
+        const existingFolder = folders['Shard Visibility'];
+        if (existingFolder) {
+            gui.removeFolder(existingFolder);
+        }
+        
+        // Initialize shard visibility - all enabled by default for loaded shards
+        for (let i = 0; i < shards.length; i++) {
+            if (shardVisibility[`shard${i}`] === undefined) {
+                shardVisibility[`shard${i}`] = true;
+            }
+        }
+        
+        // Add shard visibility toggles for loaded shards only
+        const shardFolder = gui.addFolder('Shard Visibility');
+        for (let i = 0; i < shards.length; i++) {
+            shardFolder.add(shardVisibility, `shard${i}`).name(`Shard ${i}`);
+        }
+        shardFolder.open();
+        console.log(`Added ${shards.length} shard visibility controls to dat.GUI`);
+    } catch (e) {
+        console.error('Error updating dat.GUI shards:', e);
+    }
+}
+
 // FPS counter
 let lastTime = performance.now();
 let frameCount = 0;
@@ -632,7 +730,20 @@ function updateFPS() {
 
 // Initialize
 async function init() {
-    console.log('Initializing...');
+    console.log(`Initializing... ${VERSION} - using homography directly`);
+    
+    // Wait for dat.GUI to be available
+    let retries = 0;
+    while (typeof dat === 'undefined' && retries < 50) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        retries++;
+    }
+    
+    if (typeof dat === 'undefined') {
+        console.warn('dat.GUI not loaded after waiting, continuing without GUI');
+    } else {
+        console.log('dat.GUI is available');
+    }
     
     if (!initWebGL()) {
         alert('Failed to initialize WebGL');
@@ -647,6 +758,7 @@ async function init() {
     }
     
     setupControls();
+    setupDatGUI();
     
     // Load initial image
     try {
@@ -661,6 +773,9 @@ async function init() {
     // Load shards
     await loadAllShards();
     console.log(`Total shards loaded: ${shards.length}`);
+    
+    // Update dat.GUI after shards are loaded
+    updateDatGUIShards();
     
     // Start render loop
     console.log('Starting render loop...');
