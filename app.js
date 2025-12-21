@@ -1,7 +1,7 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
-const VERSION = '2.1';
+const VERSION = '2.3';
 
 // Global state
 let gl;
@@ -551,8 +551,8 @@ function render() {
     // Update numShards uniform based on visible shards
     gl.uniform1i(shaderInfo.uniformLocations.numShards, visibleShards.length);
     
-    // Set homography matrices - IMPORTANT: we pass homography directly (display->camera transform)
-    // This avoids the double-inversion issue and should be more accurate
+    // Set homography matrices - matching C++ behavior when bUseInverse=true:
+    // We pass inverseHomography, and the shader will invert it to get homography (display->camera)
     const matrixNames = ['invH0', 'invH1', 'invH2', 'invH3', 'invH4', 'invH5', 'invH6', 
                          'invH7', 'invH8', 'invH9', 'invH10', 'invH11', 'invH12', 'invH13'];
     
@@ -562,9 +562,8 @@ function render() {
         const shard = shards[visibleShard.shardIndex];
         const matrixLoc = shaderInfo.uniformLocations[matrixNames[i]];
         if (matrixLoc && matrixLoc !== -1) {
-            // Pass homography directly (display -> camera transform)
-            // We need to transform fragCoord (display space) to texture coords (camera space)
-            gl.uniformMatrix4fv(matrixLoc, false, shard.homography);
+            // Pass inverseHomography (camera->display), shader will invert to get homography (display->camera)
+            gl.uniformMatrix4fv(matrixLoc, false, shard.inverseHomography);
         } else {
             console.error(`Matrix location for ${matrixNames[i]} not found!`);
         }
@@ -638,17 +637,18 @@ function setupControls() {
 
 // Setup dat.GUI controls
 function setupDatGUI() {
-    // Wait a bit for dat.GUI to load if needed
     if (typeof dat === 'undefined') {
-        console.warn('dat.GUI not loaded yet, will retry...');
-        setTimeout(setupDatGUI, 100);
+        console.warn('dat.GUI not available, skipping GUI setup');
         return;
     }
     
     try {
         gui = new dat.GUI({ autoPlace: false });
-        const container = document.body;
-        container.appendChild(gui.domElement);
+        
+        // Make sure it's added to the DOM
+        if (!gui.domElement.parentElement) {
+            document.body.appendChild(gui.domElement);
+        }
         
         gui.domElement.style.position = 'fixed';
         gui.domElement.style.top = '50px';
