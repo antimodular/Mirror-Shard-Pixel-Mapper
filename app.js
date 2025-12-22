@@ -1,13 +1,14 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
-const VERSION = '4.2 - 3D Debug';
+const VERSION = '4.4 - 3D Debug';
 
 // Global state
 let gl;
 let shaderInfo;
 let sourceTexture;
 let shards = [];
+window.shards = shards;  // Expose globally for cross-frame access
 let currentImage = null;
 let currentImagePath = 'bin/data/images-4k/grid.jpg';
 let debugView = false;
@@ -292,6 +293,7 @@ async function loadAllShards() {
         }
     }
     console.log(`Loaded ${shards.length} shards`);
+    window.shards = shards;  // Update global reference after loading
     document.getElementById('shardCount').textContent = shards.length;
     
     // Update shard selector max value

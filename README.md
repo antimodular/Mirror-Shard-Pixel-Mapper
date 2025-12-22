@@ -1,50 +1,67 @@
-# Mirror Shard Image Transform - Web Version
+# Mirror Shard Pixel Mapper (WebGL)
 
-This is a web-based JavaScript/WebGL version of the C++ OpenFrameworks application that uses shaders to transform 4K source images so that when viewed through mirror segments, they create a coherent image.
+**Note: This project was developed with AI assistance.**
 
-## Features
+This repo is a web-based (JS/WebGL2) visualization of the calibration + shader warping pipeline used for **[Rafael Lozano-Hemmer — *Broken Mirror Poets*](https://www.lozano-hemmer.com/broken_mirror_poets.php)**.
 
-- WebGL 2.0 shader-based image transformation
-- Support for multiple mirror shards (up to 14)
-- Homography-based perspective transformation
-- Real-time rendering with configurable controls
-- Debug view mode to visualize shard regions
+The core idea is to **pre-warp** a 4K source image so that, when viewed indirectly through **broken mirror shards**, the reflected fragments reassemble into a coherent image from a specific viewpoint.
 
-## Files
+## Live Demo
 
-- `index.html` - Main HTML file with UI controls
-- `style.css` - Styling for the interface
-- `shader.js` - WebGL shader code (vertex and fragment shaders)
-- `app.js` - Main application logic, shard loading, and rendering
+**[View Live Demo on GitHub Pages](https://stephanschulz.ca/light-network/)**
 
-## Usage
+## What this visualization represents
 
-1. Serve the files from a web server (required for loading shard data files due to CORS restrictions)
-2. Open `index.html` in a modern web browser that supports WebGL 2.0
-3. The application will automatically load shard data from `bin/data/shards-4k/`
-4. Select different source images from the dropdown
-5. Toggle debug view to see shard regions colored
-6. Adjust background color and opacity
-7. Switch between showing all shards or a single shard
+- **Physical installation model**:
+  - A **4-wall “box”** made from **four displays/monitor quadrants** (arranged as walls).
+  - A **camera** looks at the broken mirrors and the monitors’ reflections.
+  - Each mirror shard has a **mask polygon** (its outline in the camera/mirror view) and a **homography calibration** (point correspondences).
+- **What we compute**:
+  - A per-shard homography from **display/content space** ↔ **camera/mirror space**.
+  - A shader that maps from the output pixel position back into the correct source texture location.
+- **What we render**:
+  - The output is rendered into **masked regions** (one per shard) using the stencil buffer.
+  - Each shard shows a different warped part of the same 4K source image.
 
-## Requirements
+## Screenshots
 
-- Modern web browser with WebGL 2.0 support (Chrome, Firefox, Safari, Edge)
-- Web server to serve files (to avoid CORS issues when loading shard data)
+### Source (top) + masked/transformed output (bottom)
 
-## Data Structure
+![Source and transformed result](./Screenshot.jpg)
 
-Shard data files should be in the format:
-- `shardN_points.txt` - Contains point pairs for homography computation
-- `shardN_mask.txt` - Contains mask polygon points
+## Finished artwork photos
 
-Source images should be placed in `bin/data/images-4k/`
+From `artwork/`:
 
-## Technical Details
+![Broken Mirror Poets — photo 1](./artwork/broken_mirror_poets_montreal_RLH_001.jpg)
 
-The application:
-1. Loads shard point data and computes homography matrices
-2. Uses WebGL stencil buffers to mask shard regions
-3. Applies inverse homography transformations in the fragment shader
-4. Samples the source texture at transformed coordinates to create the warped image
+![Broken Mirror Poets — photo 2](./artwork/broken_mirror_poets_montreal_RLH_002.jpg)
+
+![Broken Mirror Poets — photo 3](./artwork/broken_mirror_poets_montreal_RLH_003.jpg)
+
+## Running
+
+Because the app loads shard data via `fetch()`, you must serve it via a local web server (opening the file directly will hit CORS restrictions).
+
+Example:
+
+```bash
+cd /Applications/of_v0.12-2.0_osx_release/apps/brokenMirror/shader_pixelMapper-web
+python3 -m http.server 8000
+```
+
+Then open `http://localhost:8000/index.html`.
+
+## Repo layout (high level)
+
+- **`index.html`**: UI + script includes
+- **`style.css`**: styles
+- **`shader.js`**: GLSL (vertex/fragment) shaders
+- **`app.js`**: WebGL setup, shard loading, homography compute, stencil masking, render loop
+- **`bin/data/shards-4k/`**: per-shard calibration + mask files
+  - **`shardN_points.txt`**: calibration point pairs
+  - **`shardN_mask.txt`**: shard outline polygon
+- **`bin/data/images-4k/`**: 4K source images (3840×2160)
+  - Example: `grid.jpg` is 3840×2160
+
 
