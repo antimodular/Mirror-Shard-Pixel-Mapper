@@ -78,7 +78,7 @@
     <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="version">v5.5.4</div>
+    <div id="version">v5.6.2 - WebGL Floor</div>
     <!-- Hidden file input for loading images -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <div id="info">
@@ -583,80 +583,261 @@
             floorOffsetsCalculated = true;
         }
 
-        function updateFloorTexture() {
-            if (!floorCanvas || !sourceCanvas || !floorMesh) return;
+        // WebGL floor renderer with proper homography
+        let floorScene, floorCamera, floorRenderTarget;
+        let floorSourceTexture;
+        let floorWebGLInitialized = false;
 
-            // Clear floor canvas to black
-            floorCtx.fillStyle = '#000';
-            floorCtx.fillRect(0, 0, FLOOR_RES_W, FLOOR_RES_H);
+        function initFloorWebGL() {
+            if (floorWebGLInitialized) return;
+
+            // Render target for floor texture (use main renderer)
+            floorRenderTarget = new THREE.WebGLRenderTarget(FLOOR_RES_W, FLOOR_RES_H, {
+                minFilter: THREE.LinearFilter,
+                magFilter: THREE.LinearFilter,
+                format: THREE.RGBAFormat
+            });
+
+            // Orthographic camera for 2D rendering
+            floorCamera = new THREE.OrthographicCamera(0, FLOOR_RES_W, FLOOR_RES_H, 0, -1, 1);
+            floorCamera.position.z = 1;
+
+            // Scene for floor rendering
+            floorScene = new THREE.Scene();
+            floorScene.background = new THREE.Color(0x000000);
+
+            floorWebGLInitialized = true;
+            console.log('Floor WebGL initialized');
+        }
+
+        // Homography shader for floor
+        const floorVertexShader = `
+            varying vec2 vFloorCoord;
+            void main() {
+                // Pass actual vertex position as floor coordinates
+                vFloorCoord = position.xy;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+
+        const floorFragmentShader = `
+            precision highp float;
+            uniform sampler2D sourceTexture;
+            uniform vec2 sourceResolution;
+            uniform mat3 homography;
+
+            varying vec2 vFloorCoord;
+
+            void main() {
+                // Apply homography to get source coordinates
+                vec3 srcHomog = homography * vec3(vFloorCoord, 1.0);
+                vec2 srcCoord = srcHomog.xy / srcHomog.z;
+
+                // Convert to normalized texture coordinates
+                vec2 texCoord = srcCoord / sourceResolution;
+
+                // Flip Y because Canvas texture has Y=0 at top, WebGL has Y=0 at bottom
+                texCoord.y = 1.0 - texCoord.y;
+
+                // Check bounds
+                if (texCoord.x < 0.0 || texCoord.x > 1.0 || texCoord.y < 0.0 || texCoord.y > 1.0) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+                    return;
+                }
+
+                gl_FragColor = texture2D(sourceTexture, texCoord);
+            }
+        `;
+
+        function computeHomography3x3(srcPoints, dstPoints) {
+            // Compute 3x3 homography matrix from 4 point correspondences
+            // srcPoints/dstPoints are arrays of {x, y}
+            const src = srcPoints;
+            const dst = dstPoints;
+
+            // Build the 8x9 matrix for homography computation
+            const A = [];
+            for (let i = 0; i < 4; i++) {
+                const sx = src[i].x, sy = src[i].y;
+                const dx = dst[i].x, dy = dst[i].y;
+                A.push([-sx, -sy, -1, 0, 0, 0, sx * dx, sy * dx, dx]);
+                A.push([0, 0, 0, -sx, -sy, -1, sx * dy, sy * dy, dy]);
+            }
+
+            // Solve using SVD-like approach (simplified Gaussian elimination)
+            const h = solveHomography(A);
+
+            // Return as 3x3 matrix (column-major for Three.js)
+            return new THREE.Matrix3().set(
+                h[0], h[1], h[2],
+                h[3], h[4], h[5],
+                h[6], h[7], h[8]
+            );
+        }
+
+        function solveHomography(A) {
+            // Gaussian elimination to solve Ah = 0, with h[8] = 1
+            const n = 8;
+            const m = 9;
+            const matrix = A.map(row => [...row]);
+
+            // Forward elimination
+            for (let col = 0; col < n; col++) {
+                // Find pivot
+                let maxRow = col;
+                for (let row = col + 1; row < n; row++) {
+                    if (Math.abs(matrix[row][col]) > Math.abs(matrix[maxRow][col])) {
+                        maxRow = row;
+                    }
+                }
+                [matrix[col], matrix[maxRow]] = [matrix[maxRow], matrix[col]];
+
+                if (Math.abs(matrix[col][col]) < 1e-10) continue;
+
+                // Eliminate
+                for (let row = col + 1; row < n; row++) {
+                    const factor = matrix[row][col] / matrix[col][col];
+                    for (let j = col; j < m; j++) {
+                        matrix[row][j] -= factor * matrix[col][j];
+                    }
+                }
+            }
+
+            // Back substitution with h[8] = 1
+            const h = new Array(9).fill(0);
+            h[8] = 1;
+
+            for (let row = n - 1; row >= 0; row--) {
+                let sum = 0;
+                for (let col = row + 1; col < m; col++) {
+                    sum += matrix[row][col] * h[col];
+                }
+                if (Math.abs(matrix[row][row]) > 1e-10) {
+                    h[row] = -sum / matrix[row][row];
+                }
+            }
+
+            return h;
+        }
+
+        function updateFloorTexture() {
+            if (!floorMesh || !sourceCanvas || !renderer) return;
+
+            // Initialize WebGL floor renderer if needed
+            if (!floorWebGLInitialized) {
+                initFloorWebGL();
+            }
+
+            // Update source texture from iframe canvas
+            if (!floorSourceTexture) {
+                floorSourceTexture = new THREE.CanvasTexture(sourceCanvas);
+            } else {
+                floorSourceTexture.image = sourceCanvas;
+                floorSourceTexture.needsUpdate = true;
+            }
+
+            // Clear scene
+            while (floorScene.children.length > 0) {
+                const child = floorScene.children[0];
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) child.material.dispose();
+                floorScene.remove(child);
+            }
 
             if (!iframeShards || iframeShards.length === 0) {
-                // No shards yet - show placeholder
-                floorCtx.fillStyle = '#222';
-                floorCtx.font = '48px monospace';
-                floorCtx.fillText('Waiting for shard data...', 100, 100);
+                // No shards - render black
+                renderer.setRenderTarget(floorRenderTarget);
+                renderer.clear();
+                renderer.setRenderTarget(null);
             } else {
-                // Calculate centering offset once
+                // Calculate centering offset
                 calculateFloorOffsets(iframeShards);
 
-                // For each shard, reconstruct what the camera saw
-                // maskPoints define the shape in camera space
-                // transformedMaskPoints define the corresponding shape in display space
-                iframeShards.forEach((shard, index) => {
-                    if (!shard.maskPoints || shard.maskPoints.length < 3) return;
-                    if (!shard.transformedMaskPoints || shard.transformedMaskPoints.length < 3) return;
+                const sourceW = sourceCanvas.width;
+                const sourceH = sourceCanvas.height;
 
-                    // Offset mask points to center on floor canvas
-                    const offsetMaskPoints = shard.maskPoints.map(p => ({
+                console.log(`Rendering ${iframeShards.length} shards to floor, source: ${sourceW}x${sourceH}`);
+
+                // Create a mesh for each shard with homography shader
+                iframeShards.forEach((shard, index) => {
+                    if (!shard.maskPoints || shard.maskPoints.length < 4) {
+                        console.log(`Shard ${index}: not enough maskPoints`);
+                        return;
+                    }
+                    if (!shard.transformedMaskPoints || shard.transformedMaskPoints.length < 4) {
+                        console.log(`Shard ${index}: not enough transformedMaskPoints`);
+                        return;
+                    }
+
+                    // Flip Y for WebGL coordinate system (Y=0 at bottom)
+                    const flipY = (p) => ({ x: p.x, y: FLOOR_RES_H - p.y });
+
+                    // Use first 4 points for homography (quad)
+                    // Homography maps floor coords (flipped) to source coords
+                    const srcPts = shard.transformedMaskPoints.slice(0, 4);
+                    const dstPtsFlipped = shard.maskPoints.slice(0, 4).map(p => flipY({
                         x: p.x + floorOffsetX,
                         y: p.y + floorOffsetY
                     }));
 
-                    // Draw the shard using corresponding mask polygons
-                    drawTexturedPolygon(
-                        floorCtx,
-                        sourceCanvas,
-                        shard.transformedMaskPoints,  // Source polygon (display space)
-                        offsetMaskPoints              // Destination polygon (centered on floor)
-                    );
+                    // Compute homography: flipped floor coords -> source coords
+                    const homography = computeHomography3x3(dstPtsFlipped, srcPts);
+
+                    if (index === 0) {
+                        console.log(`Shard 0 homography:`, homography.elements);
+                    }
+
+                    // Create geometry for the shard polygon (flipped Y)
+                    const shape = new THREE.Shape();
+                    const offsetMask = shard.maskPoints.map(p => flipY({
+                        x: p.x + floorOffsetX,
+                        y: p.y + floorOffsetY
+                    }));
+                    shape.moveTo(offsetMask[0].x, offsetMask[0].y);
+                    for (let i = 1; i < offsetMask.length; i++) {
+                        shape.lineTo(offsetMask[i].x, offsetMask[i].y);
+                    }
+                    shape.closePath();
+
+                    const geometry = new THREE.ShapeGeometry(shape);
+
+                    const material = new THREE.ShaderMaterial({
+                        uniforms: {
+                            sourceTexture: { value: floorSourceTexture },
+                            sourceResolution: { value: new THREE.Vector2(sourceW, sourceH) },
+                            homography: { value: homography }
+                        },
+                        vertexShader: floorVertexShader,
+                        fragmentShader: floorFragmentShader,
+                        transparent: true
+                    });
+
+                    const mesh = new THREE.Mesh(geometry, material);
+                    floorScene.add(mesh);
+
+                    if (index === 0) {
+                        console.log(`Shard 0 mesh added, vertices:`, geometry.attributes.position.count);
+                    }
                 });
+
+                console.log(`Floor scene has ${floorScene.children.length} meshes`);
+
+                // Render to target using main renderer
+                renderer.setRenderTarget(floorRenderTarget);
+                renderer.render(floorScene, floorCamera);
+                renderer.setRenderTarget(null);
             }
 
-            // Update floor mesh texture
-            const texture = new THREE.CanvasTexture(floorCanvas);
-            texture.needsUpdate = true;
-            texture.minFilter = THREE.LinearFilter;
-            texture.magFilter = THREE.LinearFilter;
-
-            if (floorMesh.material.map) {
+            // Update floor mesh with render target texture
+            if (floorMesh.material.map && floorMesh.material.map !== floorRenderTarget.texture) {
                 floorMesh.material.map.dispose();
             }
             floorMesh.material.dispose();
 
             floorMesh.material = new THREE.MeshBasicMaterial({
-                map: texture,
+                map: floorRenderTarget.texture,
                 side: THREE.DoubleSide
             });
-        }
-
-        // Draw a textured polygon by triangulating and mapping each triangle
-        function drawTexturedPolygon(ctx, srcCanvas, srcPoly, dstPoly) {
-            if (srcPoly.length !== dstPoly.length || srcPoly.length < 3) return;
-
-            // Triangulate using fan from centroid for better results
-            const srcCentroid = getPolygonCentroid(srcPoly);
-            const dstCentroid = getPolygonCentroid(dstPoly);
-
-            for (let i = 0; i < srcPoly.length; i++) {
-                const nextI = (i + 1) % srcPoly.length;
-
-                drawTexturedTriangle(
-                    ctx, srcCanvas,
-                    srcCentroid, srcPoly[i], srcPoly[nextI],
-                    dstCentroid, dstPoly[i], dstPoly[nextI],
-                    0
-                );
-            }
         }
 
         function getPolygonCentroid(points) {
@@ -666,63 +847,6 @@
                 cy += p.y;
             }
             return { x: cx / points.length, y: cy / points.length };
-        }
-
-        // Subdivide and draw triangle for better approximation
-        const SUBDIVISION_DEPTH = 2;  // 4^2 = 16 triangles per original triangle (fast)
-
-        function drawTexturedTriangle(ctx, img, s0, s1, s2, d0, d1, d2, depth) {
-            // s0, s1, s2: source triangle corners (in image coordinates)
-            // d0, d1, d2: destination triangle corners (in canvas coordinates)
-
-            // Subdivide for better approximation
-            if (depth < SUBDIVISION_DEPTH) {
-                // Midpoints in source
-                const sm01 = { x: (s0.x + s1.x) / 2, y: (s0.y + s1.y) / 2 };
-                const sm12 = { x: (s1.x + s2.x) / 2, y: (s1.y + s2.y) / 2 };
-                const sm20 = { x: (s2.x + s0.x) / 2, y: (s2.y + s0.y) / 2 };
-                // Midpoints in destination
-                const dm01 = { x: (d0.x + d1.x) / 2, y: (d0.y + d1.y) / 2 };
-                const dm12 = { x: (d1.x + d2.x) / 2, y: (d1.y + d2.y) / 2 };
-                const dm20 = { x: (d2.x + d0.x) / 2, y: (d2.y + d0.y) / 2 };
-
-                // Recursively draw 4 sub-triangles
-                drawTexturedTriangle(ctx, img, s0, sm01, sm20, d0, dm01, dm20, depth + 1);
-                drawTexturedTriangle(ctx, img, sm01, s1, sm12, dm01, d1, dm12, depth + 1);
-                drawTexturedTriangle(ctx, img, sm20, sm12, s2, dm20, dm12, d2, depth + 1);
-                drawTexturedTriangle(ctx, img, sm01, sm12, sm20, dm01, dm12, dm20, depth + 1);
-                return;
-            }
-
-            ctx.save();
-
-            // Create clipping path for destination triangle
-            ctx.beginPath();
-            ctx.moveTo(d0.x, d0.y);
-            ctx.lineTo(d1.x, d1.y);
-            ctx.lineTo(d2.x, d2.y);
-            ctx.closePath();
-            ctx.clip();
-
-            // Compute affine transformation matrix
-            const denom = (s0.x - s2.x) * (s1.y - s2.y) - (s1.x - s2.x) * (s0.y - s2.y);
-            if (Math.abs(denom) < 0.001) {
-                ctx.restore();
-                return;
-            }
-
-            const a = ((d0.x - d2.x) * (s1.y - s2.y) - (d1.x - d2.x) * (s0.y - s2.y)) / denom;
-            const b = ((d0.y - d2.y) * (s1.y - s2.y) - (d1.y - d2.y) * (s0.y - s2.y)) / denom;
-            const c = ((d1.x - d2.x) * (s0.x - s2.x) - (d0.x - d2.x) * (s1.x - s2.x)) / denom;
-            const d = ((d1.y - d2.y) * (s0.x - s2.x) - (d0.y - d2.y) * (s1.x - s2.x)) / denom;
-            const e = d2.x - a * s2.x - c * s2.y;
-            const f = d2.y - b * s2.x - d * s2.y;
-
-            // Apply transformation and draw
-            ctx.setTransform(a, b, c, d, e, f);
-            ctx.drawImage(img, 0, 0);
-
-            ctx.restore();
         }
 
         function getBounds(points) {
