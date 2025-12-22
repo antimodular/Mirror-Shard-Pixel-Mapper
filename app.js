@@ -1,7 +1,7 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
-const VERSION = '2.3';
+const VERSION = '3.1 - Fixed defaults';
 
 // Global state
 let gl;
@@ -13,6 +13,13 @@ let currentImagePath = 'bin/data/images-4k/grid.jpg';
 let debugView = false;
 let showAllShards = true;
 let currentShardIndex = 0;
+
+// Debug transformation options (set to working values)
+let useInverseHomography = false;  // Use homography (correct with current shader!)
+let flipY = true;                   // Flip Y coordinate (WebGL Y=0 at bottom, calibration Y=0 at top)
+let flipX = false;                  // Don't flip X
+let inputResolutionScale = 1.0;    // Scale input coordinates
+let outputResolutionScale = 1.0;   // Scale output texture sampling
 let bgColor = { r: 0, g: 0, b: 0, a: 0 };
 let shardVisibility = {}; // Object to track visibility of each shard
 let gui;
@@ -215,12 +222,33 @@ async function loadShard(shardName) {
         
             // Compute homography (need at least 4 points)
         if (livePoints.length >= 4 && displayPoints.length >= 4) {
+            // IMPORTANT: Match C++ behavior - homography maps displayPoints -> livePoints
+            // C++ does: homography = findHomography(displayPoints, livePoints)
             const homography = findHomographyMatrix(displayPoints.slice(0, 4), livePoints.slice(0, 4));
             const inverseHomography = invertMatrix4(homography);
             
+            // Debug: Test the transformation with first calibration point
+            const testDisplay = displayPoints[0];
+            const testLive = livePoints[0];
+            const transformedLive = transformPoint2D(testDisplay, homography);
+            const transformedBack = transformPoint2D(transformedLive, inverseHomography);
+            
+            console.log(`${shardName} homography test:`);
+            console.log(`  Display point: (${testDisplay.x.toFixed(1)}, ${testDisplay.y.toFixed(1)})`);
+            console.log(`  Expected live: (${testLive.x.toFixed(1)}, ${testLive.y.toFixed(1)})`);
+            console.log(`  Transformed:   (${transformedLive.x.toFixed(1)}, ${transformedLive.y.toFixed(1)})`);
+            console.log(`  Error: ${Math.sqrt(Math.pow(transformedLive.x - testLive.x, 2) + Math.pow(transformedLive.y - testLive.y, 2)).toFixed(2)} pixels`);
+            console.log(`  Back to display: (${transformedBack.x.toFixed(1)}, ${transformedBack.y.toFixed(1)})`);
+            
+            // Test with a point in the middle of the shard's display region
+            const testMidDisplay = {x: 1920, y: 1080};  // Center of 4K display
+            const testMidLive = transformPoint2D(testMidDisplay, homography);
+            console.log(`  Center (1920,1080) -> live: (${testMidLive.x.toFixed(1)}, ${testMidLive.y.toFixed(1)})`);
+            console.log(`  Normalized tex coord: (${(testMidLive.x/3840).toFixed(3)}, ${(testMidLive.y/2160).toFixed(3)})`);
+            
             // Transform mask points to display space using inverse homography
-            // Note: inverseHomography transforms from camera to display space
-            // maskPoints are in camera space, so we use inverseHomography to transform them
+            // Note: inverseHomography transforms from camera/live space to display space
+            // maskPoints are in camera/live space, so we use inverseHomography to transform them
             const transformedMaskPoints = maskPoints.map(p => {
                 return transformPoint2D(p, inverseHomography);
             });
@@ -551,23 +579,28 @@ function render() {
     // Update numShards uniform based on visible shards
     gl.uniform1i(shaderInfo.uniformLocations.numShards, visibleShards.length);
     
-    // Set homography matrices - matching C++ behavior when bUseInverse=true:
-    // We pass inverseHomography, and the shader will invert it to get homography (display->camera)
+    // Set homography matrices - use debug toggle to switch
     const matrixNames = ['invH0', 'invH1', 'invH2', 'invH3', 'invH4', 'invH5', 'invH6', 
                          'invH7', 'invH8', 'invH9', 'invH10', 'invH11', 'invH12', 'invH13'];
     
-    // Set matrices only for visible shards
     for (let i = 0; i < visibleShards.length; i++) {
         const visibleShard = visibleShards[i];
         const shard = shards[visibleShard.shardIndex];
         const matrixLoc = shaderInfo.uniformLocations[matrixNames[i]];
         if (matrixLoc && matrixLoc !== -1) {
-            // Pass inverseHomography (camera->display), shader will invert to get homography (display->camera)
-            gl.uniformMatrix4fv(matrixLoc, false, shard.inverseHomography);
+            // Use toggle to select which matrix to pass
+            const matrixToUse = useInverseHomography ? shard.inverseHomography : shard.homography;
+            gl.uniformMatrix4fv(matrixLoc, false, matrixToUse);
         } else {
             console.error(`Matrix location for ${matrixNames[i]} not found!`);
         }
     }
+    
+    // Set debug uniforms
+    gl.uniform1i(gl.getUniformLocation(shaderInfo.program, 'u_flipY'), flipY ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(shaderInfo.program, 'u_flipX'), flipX ? 1 : 0);
+    gl.uniform1f(gl.getUniformLocation(shaderInfo.program, 'u_inputScale'), inputResolutionScale);
+    gl.uniform1f(gl.getUniformLocation(shaderInfo.program, 'u_outputScale'), outputResolutionScale);
     
     // Render each visible shard
     const currentShardLoc = shaderInfo.uniformLocations.currentShardIndex;
@@ -675,6 +708,34 @@ function setupDatGUI() {
             if (checkbox) checkbox.checked = val;
         });
         mainFolder.open();
+        
+        // Add debug transformation controls
+        const debugFolder = gui.addFolder('Transform Debug');
+        const debugControls = {
+            useInverseH: useInverseHomography,
+            flipY: flipY,
+            flipX: flipX,
+            inputScale: inputResolutionScale,
+            outputScale: outputResolutionScale
+        };
+        
+        debugFolder.add(debugControls, 'useInverseH').name('Use Inverse H').onChange((val) => {
+            useInverseHomography = val;
+            console.log('Using', val ? 'inverseHomography' : 'homography');
+        });
+        debugFolder.add(debugControls, 'flipY').name('Flip Y').onChange((val) => {
+            flipY = val;
+        });
+        debugFolder.add(debugControls, 'flipX').name('Flip X').onChange((val) => {
+            flipX = val;
+        });
+        debugFolder.add(debugControls, 'inputScale', 0.1, 2.0).name('Input Scale').onChange((val) => {
+            inputResolutionScale = val;
+        });
+        debugFolder.add(debugControls, 'outputScale', 0.1, 2.0).name('Output Scale').onChange((val) => {
+            outputResolutionScale = val;
+        });
+        debugFolder.open();
     } catch (e) {
         console.error('Error setting up dat.GUI:', e);
     }

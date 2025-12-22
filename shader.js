@@ -41,6 +41,12 @@ uniform mat4 u_invH13;
 
 uniform vec4 u_bgColor;
 
+// Debug transformation uniforms
+uniform bool u_flipY;
+uniform bool u_flipX;
+uniform float u_inputScale;
+uniform float u_outputScale;
+
 in vec2 v_texCoord;
 in vec2 v_screenCoord;
 
@@ -84,40 +90,35 @@ mat4 getInvH(int index) {
     return mat4(1.0);  // Default to identity
 }
 
-// Transform a point from display space to camera space
-// We receive invH (inverse homography, camera->display) and invert it to get H (homography, display->camera)
-vec2 transformDisplayToCamera(vec2 displayPoint, mat4 invH) {
-    // Convert display point to homogeneous coordinates
-    vec4 p = vec4(displayPoint.x, displayPoint.y, 0.0, 1.0);
+// Transform for texture sampling - CORRECT VERSION
+// The matrix passed can be either homography or inverseHomography (controlled by JS toggle)
+// When toggle is FALSE (default): receives homography, inverts it to map display->source
+// When toggle is TRUE: receives inverseHomography, applies directly
+vec2 transformForSampling(vec2 displayPoint, mat4 H) {
+    // Invert the matrix to map backwards from display to source
+    mat4 invH = mat4(1.0);
+    float a = H[0][0], b = H[0][1], c = H[0][3];
+    float d = H[1][0], e = H[1][1], f = H[1][3];
+    float g = H[3][0], h = H[3][1], i = H[3][3];
     
-    // Invert invH to get H (homography that transforms display -> camera)
-    // Extract the core 3x3 transform components from the 4x4 matrix
-    mat4 H = mat4(1.0);
-    float a = invH[0][0], b = invH[0][1], c = invH[0][3];
-    float d = invH[1][0], e = invH[1][1], f = invH[1][3];
-    float g = invH[3][0], h = invH[3][1], i = invH[3][3];
-    
-    // Determinant of the 3x3 matrix
     float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
     
     if (abs(det) > 0.0001) {
         float invDet = 1.0 / det;
-        // Build the inverse matrix (this gives us H from invH)
-        H[0][0] = (e * i - f * h) * invDet;
-        H[0][1] = (c * h - b * i) * invDet;
-        H[0][3] = (b * f - c * e) * invDet;
-        H[1][0] = (f * g - d * i) * invDet;
-        H[1][1] = (a * i - c * g) * invDet;
-        H[1][3] = (c * d - a * f) * invDet;
-        H[3][0] = (d * h - e * g) * invDet;
-        H[3][1] = (g * b - a * h) * invDet;
-        H[3][3] = (a * e - b * d) * invDet;
+        invH[0][0] = (e * i - f * h) * invDet;
+        invH[0][1] = (c * h - b * i) * invDet;
+        invH[0][3] = (b * f - c * e) * invDet;
+        invH[1][0] = (f * g - d * i) * invDet;
+        invH[1][1] = (a * i - c * g) * invDet;
+        invH[1][3] = (c * d - a * f) * invDet;
+        invH[3][0] = (d * h - e * g) * invDet;
+        invH[3][1] = (g * b - a * h) * invDet;
+        invH[3][3] = (a * e - b * d) * invDet;
     }
     
-    // Apply the homography H (transforms display -> camera)
-    vec4 result = H * p;
+    vec4 p = vec4(displayPoint.x, displayPoint.y, 0.0, 1.0);
+    vec4 result = invH * p;
     
-    // Convert back to Cartesian coordinates with perspective division
     if (abs(result.w) < 0.0001) {
         result.w = 0.0001;
     }
@@ -127,6 +128,18 @@ vec2 transformDisplayToCamera(vec2 displayPoint, mat4 invH) {
 
 void main() {
     vec2 fragCoord = gl_FragCoord.xy;
+    
+    // Apply input scaling
+    fragCoord *= u_inputScale;
+    
+    // Apply coordinate flips
+    if (u_flipY) {
+        fragCoord.y = u_resolution.y - fragCoord.y;
+    }
+    if (u_flipX) {
+        fragCoord.x = u_resolution.x - fragCoord.x;
+    }
+    
     vec4 color = vec4(0.0, 0.0, 0.0, 0.0);  // Default to transparent
     
     // Use the uniform for the current shard index
@@ -134,15 +147,17 @@ void main() {
     
     // Make sure we have a valid shard index
     if (s >= 0 && s < u_numShards) {
-        // Get the appropriate inverse homography matrix for this shard (camera->display)
-        // The transformDisplayToCamera function will invert it to get homography (display->camera)
-        mat4 invH = getInvH(s);
+        // Get the matrix (either homography or inverseHomography based on toggle)
+        mat4 H = getInvH(s);
         
-        // Map this display space coordinate to camera space for texturing
-        vec2 cameraCoord = transformDisplayToCamera(fragCoord, invH);
+        // Transform to get source texture coordinates
+        vec2 sourceCoord = transformForSampling(fragCoord, H);
         
-        // Convert camera coordinates to normalized texture coordinates
-        vec2 normalizedTexCoord = cameraCoord / u_resolution;
+        // Apply output scaling
+        sourceCoord *= u_outputScale;
+        
+        // Convert to normalized texture coordinates
+        vec2 normalizedTexCoord = sourceCoord / u_resolution;
         
         // Ensure coordinates are in valid range for texture sampling
         normalizedTexCoord = clamp(normalizedTexCoord, 0.0, 1.0);
