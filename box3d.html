@@ -69,24 +69,28 @@
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="version">v3.2</div>
+    <div id="version">v5.1</div>
+    <!-- Hidden file input for loading images -->
+    <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <div id="info">
         <strong>3D Box View</strong><br>
         Drag to rotate | Scroll to zoom<br>
-        Walls: 9w × 16h (portrait)<br>
-        Floor: Camera view reconstruction
+        Use GUI panel to toggle visibility<br>
+        Load custom source images
     </div>
     <div id="status">Loading source...</div>
     <div id="container3d"></div>
     <iframe id="sourceFrame" src="index.html"></iframe>
 
     <script>
-        const VERSION = 'v3.2';
+        const VERSION = 'v5.1';
         console.log(`===== box3d.html ${VERSION} =====`);
+        console.log('Standalone client-side version with dat.GUI');
         console.log('Portrait walls: 9 wide × 16 tall');
-        console.log('Floor: Mask polygons centered on floor canvas');
+        console.log('Floor: Camera view reconstruction with centered masks');
 
         let scene, camera, renderer, controls;
         let boxGroup;
@@ -98,6 +102,23 @@
         let iframeWindow = null;
         let texturesReady = false;
         let updateInterval = null;
+        let gui = null;
+        let centerMarker = null;
+        let wireframeMesh = null;
+        let gridHelper = null;
+        let customSourceCanvas = null;  // For loaded images
+
+        // GUI settings
+        const guiSettings = {
+            showWalls: true,
+            showFloor: true,
+            showWireframe: true,
+            showGrid: true,
+            showCenter: true,
+            loadImage: function() {
+                document.getElementById('imageInput').click();
+            }
+        };
 
         // Wall dimensions (in 3D units)
         const wallWidth = 9;
@@ -157,6 +178,15 @@
             // Create the 4-wall box with portrait walls
             createPortraitWallBox();
 
+            // Create center marker (axes helper)
+            createCenterMarker();
+
+            // Setup dat.GUI
+            setupGUI();
+
+            // Setup file input handler
+            setupFileInput();
+
             // Handle window resize
             window.addEventListener('resize', onWindowResize, false);
 
@@ -176,6 +206,115 @@
             animate();
 
             console.log('3D Box initialized');
+        }
+
+        function createCenterMarker() {
+            // Create an axes helper at the center
+            const axesHelper = new THREE.AxesHelper(3);
+            axesHelper.position.set(0, 0.1, 0);
+            boxGroup.add(axesHelper);
+
+            // Create a small sphere at center
+            const sphereGeom = new THREE.SphereGeometry(0.3, 16, 16);
+            const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+            sphere.position.set(0, 0.1, 0);
+            boxGroup.add(sphere);
+
+            // Group them for toggling
+            centerMarker = new THREE.Group();
+            centerMarker.add(axesHelper.clone());
+            centerMarker.add(sphere.clone());
+            centerMarker.position.set(0, 0, 0);
+
+            // Remove individual ones and add group
+            boxGroup.remove(axesHelper);
+            boxGroup.remove(sphere);
+            boxGroup.add(centerMarker);
+        }
+
+        function setupGUI() {
+            gui = new dat.GUI({ autoPlace: true });
+            gui.domElement.style.marginTop = '50px';
+
+            // Visibility folder
+            const visFolder = gui.addFolder('Visibility');
+
+            visFolder.add(guiSettings, 'showWalls').name('Show Walls').onChange((value) => {
+                const walls = boxGroup.userData.walls;
+                if (walls) {
+                    walls.front.visible = value;
+                    walls.right.visible = value;
+                    walls.back.visible = value;
+                    walls.left.visible = value;
+                }
+            });
+
+            visFolder.add(guiSettings, 'showFloor').name('Show Floor').onChange((value) => {
+                if (floorMesh) floorMesh.visible = value;
+            });
+
+            visFolder.add(guiSettings, 'showWireframe').name('Show Wireframe').onChange((value) => {
+                if (wireframeMesh) wireframeMesh.visible = value;
+            });
+
+            visFolder.add(guiSettings, 'showGrid').name('Show Grid').onChange((value) => {
+                if (gridHelper) gridHelper.visible = value;
+            });
+
+            visFolder.add(guiSettings, 'showCenter').name('Show Center').onChange((value) => {
+                if (centerMarker) centerMarker.visible = value;
+            });
+
+            visFolder.open();
+
+            // Source folder
+            const sourceFolder = gui.addFolder('Source Image');
+            sourceFolder.add(guiSettings, 'loadImage').name('Load New Image...');
+            sourceFolder.open();
+        }
+
+        function setupFileInput() {
+            const fileInput = document.getElementById('imageInput');
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                console.log(`Loading image: ${file.name}`);
+                document.getElementById('status').textContent = `Loading: ${file.name}...`;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        // Create a canvas with the loaded image
+                        if (!customSourceCanvas) {
+                            customSourceCanvas = document.createElement('canvas');
+                        }
+                        customSourceCanvas.width = img.width;
+                        customSourceCanvas.height = img.height;
+                        const ctx = customSourceCanvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+
+                        console.log(`Image loaded: ${img.width}x${img.height}`);
+                        document.getElementById('status').textContent =
+                            `Custom: ${img.width}x${img.height} | Using custom source`;
+
+                        // Use custom canvas for rendering
+                        sourceCanvas = customSourceCanvas;
+
+                        // Force texture update
+                        texturesReady = false;
+                        updateWallTextures();
+                        updateFloorTexture();
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+
+                // Reset file input so same file can be loaded again
+                fileInput.value = '';
+            });
         }
 
         function tryConnectToSource() {
@@ -472,12 +611,12 @@
                 transparent: true,
                 opacity: 0.3
             });
-            const wireframe = new THREE.Mesh(wireframeGeometry, wireframeMaterial);
-            wireframe.position.y = wallHeight / 2;
-            boxGroup.add(wireframe);
+            wireframeMesh = new THREE.Mesh(wireframeGeometry, wireframeMaterial);
+            wireframeMesh.position.y = wallHeight / 2;
+            boxGroup.add(wireframeMesh);
 
             // Floor grid
-            const gridHelper = new THREE.GridHelper(wallWidth * 2, 18, 0x333333, 0x222222);
+            gridHelper = new THREE.GridHelper(wallWidth * 2, 18, 0x333333, 0x222222);
             boxGroup.add(gridHelper);
 
             // Create floor with camera aspect ratio

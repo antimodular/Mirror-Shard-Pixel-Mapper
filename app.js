@@ -1,7 +1,8 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
-const VERSION = '4.4 - 3D Debug';
+const VERSION = '5.0 - Standalone';
+const IMAGE_PATH = 'data/images/';  // New image path
 
 // Global state
 let gl;
@@ -10,7 +11,7 @@ let sourceTexture;
 let shards = [];
 window.shards = shards;  // Expose globally for cross-frame access
 let currentImage = null;
-let currentImagePath = 'bin/data/images-4k/grid.jpg';
+let currentImagePath = IMAGE_PATH + 'grid.jpg';
 let debugView = false;
 let showAllShards = true;
 let currentShardIndex = 0;
@@ -185,117 +186,67 @@ function transformPoint2D(point, matrix) {
     return { x: resultX / resultW, y: resultY / resultW };
 }
 
-// Load shard data
-async function loadShard(shardName) {
-    try {
-        // Load points file
-        const pointsResponse = await fetch(`bin/data/shards-4k/${shardName}_points.txt`);
-        const pointsText = await pointsResponse.text();
-        const pointsLines = pointsText.trim().split('\n');
-        
-        const numPoints = parseInt(pointsLines[0]);
-        const livePoints = [];
-        const displayPoints = [];
-        
-        for (let i = 0; i < numPoints; i++) {
-            const liveCoords = pointsLines[i * 2 + 1].trim().split(/\s+/);
-            const displayCoords = pointsLines[i * 2 + 2].trim().split(/\s+/);
-            
-            livePoints.push({ x: parseFloat(liveCoords[0]), y: parseFloat(liveCoords[1]) });
-            displayPoints.push({ x: parseFloat(displayCoords[0]), y: parseFloat(displayCoords[1]) });
-        }
-        
-        // Load mask file
-        let maskPoints = [];
-        try {
-            const maskResponse = await fetch(`bin/data/shards-4k/${shardName}_mask.txt`);
-            const maskText = await maskResponse.text();
-            const maskLines = maskText.trim().split('\n');
-            
-            const numMaskPoints = parseInt(maskLines[0]);
-            for (let i = 1; i <= numMaskPoints; i++) {
-                const coords = maskLines[i].trim().split(/\s+/);
-                maskPoints.push({ x: parseFloat(coords[0]), y: parseFloat(coords[1]) });
-            }
-        } catch (e) {
-            console.warn(`Could not load mask for ${shardName}:`, e);
-        }
-        
-            // Compute homography (need at least 4 points)
-        if (livePoints.length >= 4 && displayPoints.length >= 4) {
-            // IMPORTANT: Match C++ behavior - homography maps displayPoints -> livePoints
-            // C++ does: homography = findHomography(displayPoints, livePoints)
-            const homography = findHomographyMatrix(displayPoints.slice(0, 4), livePoints.slice(0, 4));
-            const inverseHomography = invertMatrix4(homography);
-            
-            // Debug: Test the transformation with first calibration point
-            const testDisplay = displayPoints[0];
-            const testLive = livePoints[0];
-            const transformedLive = transformPoint2D(testDisplay, homography);
-            const transformedBack = transformPoint2D(transformedLive, inverseHomography);
-            
-            console.log(`${shardName} homography test:`);
-            console.log(`  Display point: (${testDisplay.x.toFixed(1)}, ${testDisplay.y.toFixed(1)})`);
-            console.log(`  Expected live: (${testLive.x.toFixed(1)}, ${testLive.y.toFixed(1)})`);
-            console.log(`  Transformed:   (${transformedLive.x.toFixed(1)}, ${transformedLive.y.toFixed(1)})`);
-            console.log(`  Error: ${Math.sqrt(Math.pow(transformedLive.x - testLive.x, 2) + Math.pow(transformedLive.y - testLive.y, 2)).toFixed(2)} pixels`);
-            console.log(`  Back to display: (${transformedBack.x.toFixed(1)}, ${transformedBack.y.toFixed(1)})`);
-            
-            // Test with a point in the middle of the shard's display region
-            const testMidDisplay = {x: 1920, y: 1080};  // Center of 4K display
-            const testMidLive = transformPoint2D(testMidDisplay, homography);
-            console.log(`  Center (1920,1080) -> live: (${testMidLive.x.toFixed(1)}, ${testMidLive.y.toFixed(1)})`);
-            console.log(`  Normalized tex coord: (${(testMidLive.x/3840).toFixed(3)}, ${(testMidLive.y/2160).toFixed(3)})`);
-            
-            // Transform mask points to display space using inverse homography
-            // Note: inverseHomography transforms from camera/live space to display space
-            // maskPoints are in camera/live space, so we use inverseHomography to transform them
-            const transformedMaskPoints = maskPoints.map(p => {
-                return transformPoint2D(p, inverseHomography);
-            });
-            
-            console.log(`Loaded shard ${shardName}: ${transformedMaskPoints.length} mask points`);
-            
-            return {
-                name: shardName,
-                index: shards.length,
-                livePoints,
-                displayPoints,
-                maskPoints,
-                transformedMaskPoints,
-                homography,
-                inverseHomography,
-                homographyReady: true
-            };
-        } else {
-            console.warn(`Shard ${shardName}: Not enough points (need 4, got ${livePoints.length}/${displayPoints.length})`);
-        }
-    } catch (e) {
-        console.error(`Error loading shard ${shardName}:`, e);
+// Process shard data from embedded SHARD_DATA
+function processShard(shardData) {
+    const { index, livePoints, displayPoints, maskPoints } = shardData;
+
+    // Compute homography (need at least 4 points)
+    if (livePoints.length >= 4 && displayPoints.length >= 4) {
+        // IMPORTANT: Match C++ behavior - homography maps displayPoints -> livePoints
+        const homography = findHomographyMatrix(displayPoints.slice(0, 4), livePoints.slice(0, 4));
+        const inverseHomography = invertMatrix4(homography);
+
+        // Transform mask points to display space using inverse homography
+        const transformedMaskPoints = maskPoints.map(p => {
+            return transformPoint2D(p, inverseHomography);
+        });
+
+        console.log(`Processed shard${index}: ${maskPoints.length} mask points`);
+
+        return {
+            name: `shard${index}`,
+            index: index,
+            livePoints,
+            displayPoints,
+            maskPoints,
+            transformedMaskPoints,
+            homography,
+            inverseHomography,
+            homographyReady: true
+        };
+    } else {
+        console.warn(`Shard ${index}: Not enough points (need 4, got ${livePoints.length}/${displayPoints.length})`);
         return null;
     }
 }
 
-// Load all shards
-async function loadAllShards() {
+// Load all shards from embedded data (no fetch required)
+function loadAllShards() {
     shards = [];
-    for (let i = 0; i < 14; i++) {
-        const shard = await loadShard(`shard${i}`);
+
+    // Check if SHARD_DATA is available (from shardData.js)
+    if (typeof SHARD_DATA === 'undefined') {
+        console.error('SHARD_DATA not found! Make sure shardData.js is loaded.');
+        return;
+    }
+
+    for (const shardData of SHARD_DATA) {
+        const shard = processShard(shardData);
         if (shard && shard.homographyReady) {
             shards.push(shard);
             // Initialize visibility for this shard
-            if (shardVisibility[`shard${i}`] === undefined) {
-                shardVisibility[`shard${i}`] = true;
+            if (shardVisibility[`shard${shard.index}`] === undefined) {
+                shardVisibility[`shard${shard.index}`] = true;
             }
         } else {
             // Shard not loaded, disable it
-            shardVisibility[`shard${i}`] = false;
+            shardVisibility[`shard${shardData.index}`] = false;
         }
     }
-    console.log(`Loaded ${shards.length} shards`);
+    console.log(`Loaded ${shards.length} shards from embedded data`);
     window.shards = shards;  // Update global reference after loading
     document.getElementById('shardCount').textContent = shards.length;
-    
+
     // Update shard selector max value
     const shardInput = document.getElementById('currentShard');
     shardInput.max = Math.max(0, shards.length - 1);
@@ -634,7 +585,7 @@ function setupControls() {
     
     const imageSelect = document.getElementById('imageSelect');
     imageSelect.addEventListener('change', async (e) => {
-        currentImagePath = `bin/data/images-4k/${e.target.value}`;
+        currentImagePath = IMAGE_PATH + e.target.value;
         sourceTexture = await loadImageTexture(currentImagePath);
     });
     
@@ -772,36 +723,36 @@ function updateFPS() {
 
 // Initialize
 async function init() {
-    console.log(`Initializing... ${VERSION} - using homography directly`);
-    
+    console.log(`Initializing... ${VERSION} - standalone client-side`);
+
     // Wait for dat.GUI to be available
     let retries = 0;
     while (typeof dat === 'undefined' && retries < 50) {
         await new Promise(resolve => setTimeout(resolve, 100));
         retries++;
     }
-    
+
     if (typeof dat === 'undefined') {
         console.warn('dat.GUI not loaded after waiting, continuing without GUI');
     } else {
         console.log('dat.GUI is available');
     }
-    
+
     if (!initWebGL()) {
         alert('Failed to initialize WebGL');
         return;
     }
     console.log('WebGL initialized');
-    
+
     if (!initMaskShader()) {
         console.warn('Failed to initialize mask shader - continuing without stencil masking');
     } else {
         console.log('Mask shader initialized');
     }
-    
+
     setupControls();
     setupDatGUI();
-    
+
     // Load initial image
     try {
         sourceTexture = await loadImageTexture(currentImagePath);
@@ -811,9 +762,9 @@ async function init() {
         alert('Failed to load source texture. Make sure the image file exists.');
         return;
     }
-    
-    // Load shards
-    await loadAllShards();
+
+    // Load shards from embedded data (synchronous, no fetch needed)
+    loadAllShards();
     console.log(`Total shards loaded: ${shards.length}`);
     
     // Update dat.GUI after shards are loaded
