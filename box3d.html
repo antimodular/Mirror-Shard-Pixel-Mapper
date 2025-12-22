@@ -71,7 +71,7 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
-    <div id="version">v3.1</div>
+    <div id="version">v3.2</div>
     <div id="info">
         <strong>3D Box View</strong><br>
         Drag to rotate | Scroll to zoom<br>
@@ -83,11 +83,10 @@
     <iframe id="sourceFrame" src="index.html"></iframe>
 
     <script>
-        const VERSION = 'v3.1';
+        const VERSION = 'v3.2';
         console.log(`===== box3d.html ${VERSION} =====`);
         console.log('Portrait walls: 9 wide × 16 tall');
-        console.log('Floor: Using maskPoints ↔ transformedMaskPoints polygon mapping');
-        console.log('Triangulation via centroid fan for texture warping');
+        console.log('Floor: Mask polygons centered on floor canvas');
 
         let scene, camera, renderer, controls;
         let boxGroup;
@@ -240,6 +239,46 @@
             }
         }
 
+        // Offset to center mask content on floor canvas
+        // Camera space bounds: X(1287-2840), Y(211-1743)
+        // Center of content: (~2063, ~977)
+        // We need to shift content so it's centered on the floor canvas
+        let floorOffsetX = 0;
+        let floorOffsetY = 0;
+        let floorOffsetsCalculated = false;
+
+        function calculateFloorOffsets(shards) {
+            if (floorOffsetsCalculated || !shards || shards.length === 0) return;
+
+            // Find bounding box of all mask points
+            let minX = Infinity, minY = Infinity;
+            let maxX = -Infinity, maxY = -Infinity;
+
+            shards.forEach(shard => {
+                if (!shard.maskPoints) return;
+                shard.maskPoints.forEach(p => {
+                    minX = Math.min(minX, p.x);
+                    minY = Math.min(minY, p.y);
+                    maxX = Math.max(maxX, p.x);
+                    maxY = Math.max(maxY, p.y);
+                });
+            });
+
+            // Calculate offset to center content on floor canvas
+            const contentCenterX = (minX + maxX) / 2;
+            const contentCenterY = (minY + maxY) / 2;
+            const canvasCenterX = FLOOR_RES_W / 2;
+            const canvasCenterY = FLOOR_RES_H / 2;
+
+            floorOffsetX = canvasCenterX - contentCenterX;
+            floorOffsetY = canvasCenterY - contentCenterY;
+
+            console.log(`Floor content bounds: (${minX.toFixed(0)}, ${minY.toFixed(0)}) to (${maxX.toFixed(0)}, ${maxY.toFixed(0)})`);
+            console.log(`Centering offset: (${floorOffsetX.toFixed(0)}, ${floorOffsetY.toFixed(0)})`);
+
+            floorOffsetsCalculated = true;
+        }
+
         function updateFloorTexture() {
             if (!floorCanvas || !sourceCanvas || !floorMesh) return;
 
@@ -253,20 +292,28 @@
                 floorCtx.font = '48px monospace';
                 floorCtx.fillText('Waiting for shard data...', 100, 100);
             } else {
+                // Calculate centering offset once
+                calculateFloorOffsets(iframeShards);
+
                 // For each shard, reconstruct what the camera saw
                 // maskPoints define the shape in camera space
                 // transformedMaskPoints define the corresponding shape in display space
-                // We use the homography to map between them
                 iframeShards.forEach((shard, index) => {
                     if (!shard.maskPoints || shard.maskPoints.length < 3) return;
                     if (!shard.transformedMaskPoints || shard.transformedMaskPoints.length < 3) return;
+
+                    // Offset mask points to center on floor canvas
+                    const offsetMaskPoints = shard.maskPoints.map(p => ({
+                        x: p.x + floorOffsetX,
+                        y: p.y + floorOffsetY
+                    }));
 
                     // Draw the shard using corresponding mask polygons
                     drawTexturedPolygon(
                         floorCtx,
                         sourceCanvas,
                         shard.transformedMaskPoints,  // Source polygon (display space)
-                        shard.maskPoints              // Destination polygon (camera/floor space)
+                        offsetMaskPoints              // Destination polygon (centered on floor)
                     );
                 });
             }
