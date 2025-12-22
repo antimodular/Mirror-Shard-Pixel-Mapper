@@ -1,7 +1,7 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
-const VERSION = '3.1 - Fixed defaults';
+const VERSION = '4.0 - Final';
 
 // Global state
 let gl;
@@ -14,12 +14,12 @@ let debugView = false;
 let showAllShards = true;
 let currentShardIndex = 0;
 
-// Debug transformation options (set to working values)
-let useInverseHomography = false;  // Use homography (correct with current shader!)
-let flipY = true;                   // Flip Y coordinate (WebGL Y=0 at bottom, calibration Y=0 at top)
-let flipX = false;                  // Don't flip X
-let inputResolutionScale = 1.0;    // Scale input coordinates
-let outputResolutionScale = 1.0;   // Scale output texture sampling
+// Correct transformation settings (hardcoded)
+const useInverseHomography = true;  // Use inverseHomography
+const flipY = true;                  // Flip Y coordinate (WebGL Y=0 at bottom, calibration Y=0 at top)
+const flipX = false;                 // Don't flip X
+const inputResolutionScale = 1.0;   // Scale input coordinates
+const outputResolutionScale = 1.0;  // Scale output texture sampling
 let bgColor = { r: 0, g: 0, b: 0, a: 0 };
 let shardVisibility = {}; // Object to track visibility of each shard
 let gui;
@@ -579,7 +579,7 @@ function render() {
     // Update numShards uniform based on visible shards
     gl.uniform1i(shaderInfo.uniformLocations.numShards, visibleShards.length);
     
-    // Set homography matrices - use debug toggle to switch
+    // Set homography matrices - use inverseHomography (correct setting)
     const matrixNames = ['invH0', 'invH1', 'invH2', 'invH3', 'invH4', 'invH5', 'invH6', 
                          'invH7', 'invH8', 'invH9', 'invH10', 'invH11', 'invH12', 'invH13'];
     
@@ -588,19 +588,12 @@ function render() {
         const shard = shards[visibleShard.shardIndex];
         const matrixLoc = shaderInfo.uniformLocations[matrixNames[i]];
         if (matrixLoc && matrixLoc !== -1) {
-            // Use toggle to select which matrix to pass
-            const matrixToUse = useInverseHomography ? shard.inverseHomography : shard.homography;
-            gl.uniformMatrix4fv(matrixLoc, false, matrixToUse);
+            // Use inverseHomography (correct setting with Y-flip)
+            gl.uniformMatrix4fv(matrixLoc, false, shard.inverseHomography);
         } else {
             console.error(`Matrix location for ${matrixNames[i]} not found!`);
         }
     }
-    
-    // Set debug uniforms
-    gl.uniform1i(gl.getUniformLocation(shaderInfo.program, 'u_flipY'), flipY ? 1 : 0);
-    gl.uniform1i(gl.getUniformLocation(shaderInfo.program, 'u_flipX'), flipX ? 1 : 0);
-    gl.uniform1f(gl.getUniformLocation(shaderInfo.program, 'u_inputScale'), inputResolutionScale);
-    gl.uniform1f(gl.getUniformLocation(shaderInfo.program, 'u_outputScale'), outputResolutionScale);
     
     // Render each visible shard
     const currentShardLoc = shaderInfo.uniformLocations.currentShardIndex;
@@ -708,34 +701,6 @@ function setupDatGUI() {
             if (checkbox) checkbox.checked = val;
         });
         mainFolder.open();
-        
-        // Add debug transformation controls
-        const debugFolder = gui.addFolder('Transform Debug');
-        const debugControls = {
-            useInverseH: useInverseHomography,
-            flipY: flipY,
-            flipX: flipX,
-            inputScale: inputResolutionScale,
-            outputScale: outputResolutionScale
-        };
-        
-        debugFolder.add(debugControls, 'useInverseH').name('Use Inverse H').onChange((val) => {
-            useInverseHomography = val;
-            console.log('Using', val ? 'inverseHomography' : 'homography');
-        });
-        debugFolder.add(debugControls, 'flipY').name('Flip Y').onChange((val) => {
-            flipY = val;
-        });
-        debugFolder.add(debugControls, 'flipX').name('Flip X').onChange((val) => {
-            flipX = val;
-        });
-        debugFolder.add(debugControls, 'inputScale', 0.1, 2.0).name('Input Scale').onChange((val) => {
-            inputResolutionScale = val;
-        });
-        debugFolder.add(debugControls, 'outputScale', 0.1, 2.0).name('Output Scale').onChange((val) => {
-            outputResolutionScale = val;
-        });
-        debugFolder.open();
     } catch (e) {
         console.error('Error setting up dat.GUI:', e);
     }
