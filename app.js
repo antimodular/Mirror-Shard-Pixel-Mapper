@@ -1,7 +1,7 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
-const VERSION = '4.0 - Final';
+const VERSION = '4.2 - 3D Debug';
 
 // Global state
 let gl;
@@ -701,6 +701,20 @@ function setupDatGUI() {
             if (checkbox) checkbox.checked = val;
         });
         mainFolder.open();
+        
+        // Add 3D view toggle
+        const viewFolder = gui.addFolder('View Options');
+        const viewControls = {
+            show3D: false
+        };
+        viewFolder.add(viewControls, 'show3D').name('3D Box View (or press 3)').onChange((val) => {
+            if (typeof toggle3DView === 'function') {
+                if (val !== show3DView) {
+                    toggle3DView();
+                }
+            }
+        });
+        viewFolder.open();
     } catch (e) {
         console.error('Error setting up dat.GUI:', e);
     }
