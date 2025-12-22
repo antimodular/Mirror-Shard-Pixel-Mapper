@@ -69,10 +69,16 @@
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- Line2 dependencies in correct order -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineSegmentsGeometry.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineGeometry.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineSegments2.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/Line2.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineMaterial.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="version">v5.4</div>
+    <div id="version">v5.5.2</div>
     <!-- Hidden file input for loading images -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <div id="info">
@@ -85,9 +91,9 @@
     <iframe id="sourceFrame" src="index.html"></iframe>
 
     <script>
-        const VERSION = 'v5.4';
+        const VERSION = 'v5.5.2';
         console.log(`===== box3d.html ${VERSION} =====`);
-        console.log('White outlines with adjustable thickness');
+        console.log('Fat lines (Line2) for adjustable width, reorganized GUI');
         console.log('Portrait walls: 9 wide × 16 tall');
         console.log('Floor: Camera view reconstruction with centered masks');
 
@@ -212,7 +218,6 @@
 
         function createWallOutlines() {
             const halfWidth = wallWidth / 2;
-            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: guiSettings.lineWidth });
 
             // Wall positions and rotations (matching wall creation)
             const wallConfigs = [
@@ -223,19 +228,29 @@
             ];
 
             wallConfigs.forEach((config, index) => {
-                // Create rectangle outline for each wall
+                // Create rectangle outline for each wall using Line2 (fat lines)
                 const hw = wallWidth / 2;
                 const hh = wallHeight / 2;
-                const points = [
-                    new THREE.Vector3(-hw, -hh, 0),
-                    new THREE.Vector3(hw, -hh, 0),
-                    new THREE.Vector3(hw, hh, 0),
-                    new THREE.Vector3(-hw, hh, 0),
-                    new THREE.Vector3(-hw, -hh, 0)  // Close the loop
+                // Line2 uses flat position array [x1,y1,z1, x2,y2,z2, ...]
+                const positions = [
+                    -hw, -hh, 0,
+                    hw, -hh, 0,
+                    hw, hh, 0,
+                    -hw, hh, 0,
+                    -hw, -hh, 0  // Close the loop
                 ];
 
-                const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                const line = new THREE.Line(geometry, lineMaterial.clone());
+                const geometry = new THREE.LineGeometry();
+                geometry.setPositions(positions);
+
+                const material = new THREE.LineMaterial({
+                    color: 0xffffff,
+                    linewidth: guiSettings.lineWidth,  // LineMaterial uses pixels
+                    resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
+                });
+
+                const line = new THREE.Line2(geometry, material);
+                line.computeLineDistances();
                 line.position.set(...config.pos);
                 line.rotation.set(...config.rot);
                 line.visible = guiSettings.showWallOutlines;
@@ -263,37 +278,43 @@
             const floorW = wallWidth * 1.5;
             const floorD = floorW / cameraAspect;
 
-            // Create floor segment outlines
+            // Create floor segment outlines using Line2 (fat lines)
             if (guiSettings.showFloorSegments) {
-                const floorLineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: guiSettings.lineWidth });
-
                 iframeShards.forEach((shard, index) => {
                     if (!shard.maskPoints || shard.maskPoints.length < 3) return;
 
                     // Offset and scale mask points to floor 3D space
-                    const points = shard.maskPoints.map(p => {
-                        // Apply floor offset and scale to 3D units
-                        // Map canvas coordinates to floor mesh coordinates
+                    // Build flat position array for Line2
+                    const positions = [];
+                    shard.maskPoints.forEach(p => {
                         const normalizedX = (p.x + floorOffsetX) / FLOOR_RES_W;
                         const normalizedY = (p.y + floorOffsetY) / FLOOR_RES_H;
                         const x = (normalizedX - 0.5) * floorW;
                         const z = (normalizedY - 0.5) * floorD;
-                        return new THREE.Vector3(x, 0.02, z);
+                        positions.push(x, 0.02, z);
                     });
                     // Close the loop
-                    points.push(points[0].clone());
+                    const firstX = positions[0], firstY = positions[1], firstZ = positions[2];
+                    positions.push(firstX, firstY, firstZ);
 
-                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                    const line = new THREE.Line(geometry, floorLineMaterial.clone());
+                    const geometry = new THREE.LineGeometry();
+                    geometry.setPositions(positions);
+
+                    const material = new THREE.LineMaterial({
+                        color: 0xffffff,
+                        linewidth: guiSettings.lineWidth,
+                        resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
+                    });
+
+                    const line = new THREE.Line2(geometry, material);
+                    line.computeLineDistances();
                     boxGroup.add(line);
                     floorSegmentOutlines.push(line);
                 });
             }
 
-            // Create wall segment outlines
+            // Create wall segment outlines using Line2 (fat lines)
             if (guiSettings.showWallSegments) {
-                const wallLineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: guiSettings.lineWidth });
-
                 // Determine which quadrant each shard belongs to based on transformedMaskPoints
                 iframeShards.forEach((shard, index) => {
                     if (!shard.transformedMaskPoints || shard.transformedMaskPoints.length < 3) return;
@@ -317,22 +338,31 @@
                     const qy = Math.floor(quadrant / 2) * quadrantHeight;
 
                     // Transform mask points to wall local coordinates (with 90° CCW rotation)
-                    // The wall texture applies: rotate(-Math.PI/2) which is 90° CCW
-                    // Original quadrant: 1920×1080, After rotation: 1080×1920 mapped to 9×16 wall
-                    const points = shard.transformedMaskPoints.map(p => {
-                        // Offset to quadrant local coords (0 to quadrantWidth/Height)
+                    // Build flat position array for Line2
+                    const positions = [];
+                    shard.transformedMaskPoints.forEach(p => {
                         const lx = p.x - qx;
                         const ly = p.y - qy;
                         // For 90° CCW rotation: new_x = ly, new_y flipped for correct alignment
-                        // Then normalize and center on wall
                         const wx = (ly / quadrantHeight - 0.5) * wallWidth;
                         const wy = (lx / quadrantWidth - 0.5) * wallHeight;
-                        return new THREE.Vector3(wx, wy, 0);
+                        positions.push(wx, wy, 0);
                     });
-                    points.push(points[0].clone());
+                    // Close the loop
+                    const firstX = positions[0], firstY = positions[1], firstZ = positions[2];
+                    positions.push(firstX, firstY, firstZ);
 
-                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                    const line = new THREE.Line(geometry, wallLineMaterial.clone());
+                    const geometry = new THREE.LineGeometry();
+                    geometry.setPositions(positions);
+
+                    const material = new THREE.LineMaterial({
+                        color: 0xffffff,
+                        linewidth: guiSettings.lineWidth,
+                        resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
+                    });
+
+                    const line = new THREE.Line2(geometry, material);
+                    line.computeLineDistances();
                     line.position.set(...config.pos);
                     line.rotation.set(...config.rot);
                     boxGroup.add(line);
@@ -354,10 +384,10 @@
             gui = new dat.GUI({ autoPlace: true });
             gui.domElement.style.marginTop = '50px';
 
-            // Visibility folder
-            const visFolder = gui.addFolder('Visibility');
+            // Walls folder
+            const wallsFolder = gui.addFolder('Walls');
 
-            visFolder.add(guiSettings, 'showWalls').name('Show Walls').onChange((value) => {
+            wallsFolder.add(guiSettings, 'showWalls').name('Show Walls').onChange((value) => {
                 const walls = boxGroup.userData.walls;
                 if (walls) {
                     walls.front.visible = value;
@@ -367,33 +397,38 @@
                 }
             });
 
-            visFolder.add(guiSettings, 'showFloor').name('Show Floor').onChange((value) => {
-                if (floorMesh) floorMesh.visible = value;
-            });
-
-            visFolder.add(guiSettings, 'showGrid').name('Show Grid').onChange((value) => {
-                if (gridHelper) gridHelper.visible = value;
-            });
-
-            visFolder.open();
-
-            // Outlines folder
-            const outlinesFolder = gui.addFolder('Outlines');
-
-            outlinesFolder.add(guiSettings, 'showWallOutlines').name('Wall Borders').onChange((value) => {
+            wallsFolder.add(guiSettings, 'showWallOutlines').name('Wall Borders').onChange((value) => {
                 wallOutlines.forEach(line => line.visible = value);
             });
 
-            outlinesFolder.add(guiSettings, 'showWallSegments').name('Wall Segments').onChange((value) => {
+            wallsFolder.add(guiSettings, 'showWallSegments').name('Wall Segments').onChange((value) => {
                 updateSegmentOutlines();
             });
 
-            outlinesFolder.add(guiSettings, 'showFloorSegments').name('Floor Segments').onChange((value) => {
+            wallsFolder.open();
+
+            // Floor folder
+            const floorFolder = gui.addFolder('Floor');
+
+            floorFolder.add(guiSettings, 'showFloor').name('Show Floor').onChange((value) => {
+                if (floorMesh) floorMesh.visible = value;
+            });
+
+            floorFolder.add(guiSettings, 'showFloorSegments').name('Floor Segments').onChange((value) => {
                 updateSegmentOutlines();
             });
 
-            outlinesFolder.add(guiSettings, 'lineWidth', 1, 10, 1).name('Line Width').onChange((value) => {
-                // Update all outline line widths
+            floorFolder.open();
+
+            // Settings folder
+            const settingsFolder = gui.addFolder('Settings');
+
+            settingsFolder.add(guiSettings, 'showGrid').name('Show Grid').onChange((value) => {
+                if (gridHelper) gridHelper.visible = value;
+            });
+
+            settingsFolder.add(guiSettings, 'lineWidth', 1, 10, 1).name('Line Width').onChange((value) => {
+                // Update all outline line widths (Line2 uses pixels)
                 wallOutlines.forEach(line => {
                     line.material.linewidth = value;
                     line.material.needsUpdate = true;
@@ -408,7 +443,7 @@
                 });
             });
 
-            outlinesFolder.open();
+            settingsFolder.open();
 
             // Source folder
             const sourceFolder = gui.addFolder('Source Image');
@@ -849,6 +884,18 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+
+            // Update LineMaterial resolution for all Line2 objects
+            const resolution = new THREE.Vector2(window.innerWidth, window.innerHeight);
+            wallOutlines.forEach(line => {
+                line.material.resolution = resolution;
+            });
+            wallSegmentOutlines.forEach(line => {
+                line.material.resolution = resolution;
+            });
+            floorSegmentOutlines.forEach(line => {
+                line.material.resolution = resolution;
+            });
         }
 
         function animate() {
