@@ -71,33 +71,51 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
-    <div id="version">v2.1</div>
+    <div id="version">v2.6</div>
     <div id="info">
         <strong>3D Box View</strong><br>
         Drag to rotate | Scroll to zoom<br>
-        Walls: 9w × 16h (portrait 16:9)<br>
-        Quadrants: TL=Front, TR=Right, BL=Back, BR=Left
+        Walls: 9w × 16h (portrait)<br>
+        Floor: Walls folded down
     </div>
     <div id="status">Loading source...</div>
     <div id="container3d"></div>
     <iframe id="sourceFrame" src="index.html"></iframe>
 
     <script>
-        const VERSION = 'v2.1';
+        const VERSION = 'v2.6';
         console.log(`===== box3d.html ${VERSION} =====`);
         console.log('Portrait walls: 9 wide × 16 tall');
         console.log('Walls attached along their 16-unit tall edges');
         console.log('Quadrants rotated 90° to fit portrait walls');
+        console.log('Floor shows walls folded down onto floor plane');
 
         let scene, camera, renderer, controls;
         let boxGroup;
+        let floorMesh = null;
+        let floorCanvas = null;
+        let floorCtx = null;
         let sourceCanvas = null;
         let texturesReady = false;
         let updateInterval = null;
 
-        // Wall dimensions
+        // Wall dimensions (in 3D units)
         const wallWidth = 9;
         const wallHeight = 16;
+
+        // Quadrant resolution (each wall texture before rotation)
+        const QUADRANT_W = 1920;  // Original quadrant width
+        const QUADRANT_H = 1080;  // Original quadrant height
+
+        // Floor canvas shows unfolded box: center + 4 walls folded out
+        // Layout:     [Back]
+        //        [Left][Center][Right]
+        //             [Front]
+        // But walls are rotated 90° so their dimensions are swapped
+        // Each wall after rotation: 1080w x 1920h (portrait)
+        const FLOOR_CENTER = QUADRANT_H;  // 1080 (matches rotated wall width)
+        const FLOOR_WALL = QUADRANT_W;    // 1920 (matches rotated wall height)
+        const FLOOR_TOTAL = FLOOR_CENTER + 2 * FLOOR_WALL;  // 1080 + 3840 = 4920
 
         function init() {
             // Scene
@@ -106,15 +124,15 @@
 
             const halfWidth = wallWidth / 2;
 
-            // Camera - positioned for tall portrait walls
+            // Camera - positioned to see walls and unfolded floor
             camera = new THREE.PerspectiveCamera(
                 60,
                 window.innerWidth / window.innerHeight,
                 0.1,
                 1000
             );
-            camera.position.set(0, wallHeight / 2, 20);
-            camera.lookAt(0, wallHeight / 2, 0);
+            camera.position.set(0, 30, 40);  // Higher and further back
+            camera.lookAt(0, 0, 0);
 
             // Renderer
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -126,9 +144,9 @@
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.05;
-            controls.target.set(0, wallHeight / 2, 0);
-            controls.minDistance = 5;
-            controls.maxDistance = 50;
+            controls.target.set(0, 4, 0);  // Look slightly above floor
+            controls.minDistance = 10;
+            controls.maxDistance = 100;
 
             // Lights
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
@@ -174,11 +192,24 @@
 
                 if (sourceCanvas && sourceCanvas.width > 0) {
                     console.log(`Connected to source canvas: ${sourceCanvas.width}x${sourceCanvas.height}`);
-                    document.getElementById('status').textContent = `Source: ${sourceCanvas.width}x${sourceCanvas.height} - Live updating`;
+
+                    // Create floor canvas for unfolded box view
+                    floorCanvas = document.createElement('canvas');
+                    floorCanvas.width = FLOOR_TOTAL;
+                    floorCanvas.height = FLOOR_TOTAL;
+                    floorCtx = floorCanvas.getContext('2d');
+
+                    document.getElementById('status').textContent =
+                        `Source: ${sourceCanvas.width}x${sourceCanvas.height} | Floor: ${FLOOR_TOTAL}x${FLOOR_TOTAL}`;
 
                     // Start periodic texture updates
-                    updateInterval = setInterval(updateWallTextures, 100); // 10 FPS update
-                    updateWallTextures(); // Initial update
+                    updateInterval = setInterval(() => {
+                        updateWallTextures();
+                        updateFloorTexture();
+                    }, 100); // 10 FPS update
+
+                    updateWallTextures();
+                    updateFloorTexture();
                 } else {
                     console.log('Canvas not ready, retrying...');
                     document.getElementById('status').textContent = 'Canvas not ready, retrying...';
@@ -188,6 +219,89 @@
                 console.error('Cannot access iframe canvas (CORS?):', e);
                 document.getElementById('status').textContent = 'Error: Cannot access source (same-origin required)';
             }
+        }
+
+        function updateFloorTexture() {
+            if (!floorCanvas || !sourceCanvas || !floorMesh) return;
+
+            // Clear floor canvas to black
+            floorCtx.fillStyle = '#000';
+            floorCtx.fillRect(0, 0, FLOOR_TOTAL, FLOOR_TOTAL);
+
+            // Source canvas layout (3840x2160):
+            // [Q0: TL 1920x1080] [Q1: TR 1920x1080]
+            // [Q2: BL 1920x1080] [Q3: BR 1920x1080]
+            //
+            // Wall mapping (after 90° CCW rotation each is 1080w x 1920h):
+            // Q0 -> Front wall
+            // Q1 -> Right wall
+            // Q2 -> Back wall
+            // Q3 -> Left wall
+            //
+            // Floor layout (unfolded box):
+            //              [Back Q2]
+            //     [Left Q3][Center ][Right Q1]
+            //              [Front Q0]
+
+            const qw = QUADRANT_W;  // 1920
+            const qh = QUADRANT_H;  // 1080
+            const ctr = FLOOR_WALL; // 1920 offset to center
+
+            // Draw each wall folded onto floor
+            // Each quadrant needs to be rotated 90° CCW and positioned
+
+            // FRONT wall (Q0 - top-left quadrant) - folds DOWN from front edge
+            // After folding: appears below center, rotated so top of wall is at fold edge
+            floorCtx.save();
+            floorCtx.translate(ctr + qh / 2, ctr + FLOOR_CENTER + qw / 2);
+            floorCtx.rotate(-Math.PI / 2);
+            floorCtx.drawImage(sourceCanvas, 0, 0, qw, qh, -qw / 2, -qh / 2, qw, qh);
+            floorCtx.restore();
+
+            // BACK wall (Q2 - bottom-left quadrant) - folds UP from back edge
+            // After folding: appears above center, rotated 180° + 90° = 270°
+            floorCtx.save();
+            floorCtx.translate(ctr + qh / 2, ctr - qw / 2);
+            floorCtx.rotate(Math.PI / 2);
+            floorCtx.drawImage(sourceCanvas, 0, qh, qw, qh, -qw / 2, -qh / 2, qw, qh);
+            floorCtx.restore();
+
+            // RIGHT wall (Q1 - top-right quadrant) - folds LEFT from right edge
+            // After folding: appears to the right of center
+            floorCtx.save();
+            floorCtx.translate(ctr + FLOOR_CENTER + qw / 2, ctr + qh / 2);
+            floorCtx.rotate(Math.PI);
+            floorCtx.drawImage(sourceCanvas, qw, 0, qw, qh, -qw / 2, -qh / 2, qw, qh);
+            floorCtx.restore();
+
+            // LEFT wall (Q3 - bottom-right quadrant) - folds RIGHT from left edge
+            // After folding: appears to the left of center
+            floorCtx.save();
+            floorCtx.translate(ctr - qw / 2, ctr + qh / 2);
+            // No rotation needed, just flip
+            floorCtx.drawImage(sourceCanvas, qw, qh, qw, qh, -qw / 2, -qh / 2, qw, qh);
+            floorCtx.restore();
+
+            // Draw center square (the actual floor of the box) - optional outline
+            floorCtx.strokeStyle = '#444';
+            floorCtx.lineWidth = 2;
+            floorCtx.strokeRect(ctr, ctr, FLOOR_CENTER, FLOOR_CENTER);
+
+            // Update floor mesh texture
+            const texture = new THREE.CanvasTexture(floorCanvas);
+            texture.needsUpdate = true;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+
+            if (floorMesh.material.map) {
+                floorMesh.material.map.dispose();
+            }
+            floorMesh.material.dispose();
+
+            floorMesh.material = new THREE.MeshBasicMaterial({
+                map: texture,
+                side: THREE.DoubleSide
+            });
         }
 
         function createPortraitWallBox() {
@@ -254,9 +368,25 @@
             wireframe.position.y = wallHeight / 2;
             boxGroup.add(wireframe);
 
-            // Floor grid
-            const gridHelper = new THREE.GridHelper(wallWidth * 2, 18, 0x444444, 0x222222);
+            // Floor size for unfolded box: center (wallWidth) + 2 walls (2 * wallHeight)
+            const floorSize = wallWidth + 2 * wallHeight;  // 9 + 32 = 41 units
+
+            // Floor grid (sized to show unfolded box area)
+            const gridHelper = new THREE.GridHelper(floorSize, 41, 0x333333, 0x222222);
             boxGroup.add(gridHelper);
+
+            // Create floor showing unfolded box (cross pattern)
+            // The floor extends beyond the box to show folded-down walls
+            const floorGeometry = new THREE.PlaneGeometry(floorSize, floorSize);
+            const floorMaterial = new THREE.MeshBasicMaterial({
+                color: 0x333333,
+                side: THREE.DoubleSide
+            });
+            floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
+            floorMesh.rotation.x = -Math.PI / 2;  // Lay flat
+            floorMesh.position.y = 0.01;  // Slightly above grid
+            boxGroup.add(floorMesh);
+            console.log(`Floor: ${floorSize} × ${floorSize} (unfolded box cross)`);
 
             // Store wall references
             boxGroup.userData.walls = {
@@ -265,8 +395,10 @@
                 back: backWall,
                 left: leftWall
             };
+            boxGroup.userData.floor = floorMesh;
 
             console.log(`Box created: ${wallWidth}×${wallHeight}×${wallWidth} (w×h×d)`);
+            console.log('Floor added for source image display');
         }
 
         function updateWallTextures() {
