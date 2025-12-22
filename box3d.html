@@ -653,7 +653,8 @@
                 drawTexturedTriangle(
                     ctx, srcCanvas,
                     srcCentroid, srcPoly[i], srcPoly[nextI],
-                    dstCentroid, dstPoly[i], dstPoly[nextI]
+                    dstCentroid, dstPoly[i], dstPoly[nextI],
+                    0
                 );
             }
         }
@@ -667,10 +668,31 @@
             return { x: cx / points.length, y: cy / points.length };
         }
 
-        // Draw a textured triangle using affine transformation
-        function drawTexturedTriangle(ctx, img, s0, s1, s2, d0, d1, d2) {
+        // Subdivide and draw triangle for better approximation
+        const SUBDIVISION_DEPTH = 2;  // 4^2 = 16 triangles per original triangle (fast)
+
+        function drawTexturedTriangle(ctx, img, s0, s1, s2, d0, d1, d2, depth) {
             // s0, s1, s2: source triangle corners (in image coordinates)
             // d0, d1, d2: destination triangle corners (in canvas coordinates)
+
+            // Subdivide for better approximation
+            if (depth < SUBDIVISION_DEPTH) {
+                // Midpoints in source
+                const sm01 = { x: (s0.x + s1.x) / 2, y: (s0.y + s1.y) / 2 };
+                const sm12 = { x: (s1.x + s2.x) / 2, y: (s1.y + s2.y) / 2 };
+                const sm20 = { x: (s2.x + s0.x) / 2, y: (s2.y + s0.y) / 2 };
+                // Midpoints in destination
+                const dm01 = { x: (d0.x + d1.x) / 2, y: (d0.y + d1.y) / 2 };
+                const dm12 = { x: (d1.x + d2.x) / 2, y: (d1.y + d2.y) / 2 };
+                const dm20 = { x: (d2.x + d0.x) / 2, y: (d2.y + d0.y) / 2 };
+
+                // Recursively draw 4 sub-triangles
+                drawTexturedTriangle(ctx, img, s0, sm01, sm20, d0, dm01, dm20, depth + 1);
+                drawTexturedTriangle(ctx, img, sm01, s1, sm12, dm01, d1, dm12, depth + 1);
+                drawTexturedTriangle(ctx, img, sm20, sm12, s2, dm20, dm12, d2, depth + 1);
+                drawTexturedTriangle(ctx, img, sm01, sm12, sm20, dm01, dm12, dm20, depth + 1);
+                return;
+            }
 
             ctx.save();
 
@@ -683,7 +705,6 @@
             ctx.clip();
 
             // Compute affine transformation matrix
-            // We need to find matrix M such that M * src = dst
             const denom = (s0.x - s2.x) * (s1.y - s2.y) - (s1.x - s2.x) * (s0.y - s2.y);
             if (Math.abs(denom) < 0.001) {
                 ctx.restore();
