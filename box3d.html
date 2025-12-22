@@ -72,7 +72,7 @@
     <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="version">v5.2</div>
+    <div id="version">v5.4</div>
     <!-- Hidden file input for loading images -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <div id="info">
@@ -85,9 +85,9 @@
     <iframe id="sourceFrame" src="index.html"></iframe>
 
     <script>
-        const VERSION = 'v5.2';
+        const VERSION = 'v5.4';
         console.log(`===== box3d.html ${VERSION} =====`);
-        console.log('Standalone with segment outlines');
+        console.log('White outlines with adjustable thickness');
         console.log('Portrait walls: 9 wide × 16 tall');
         console.log('Floor: Camera view reconstruction with centered masks');
 
@@ -116,6 +116,7 @@
             showWallOutlines: false,
             showWallSegments: false,
             showFloorSegments: false,
+            lineWidth: 1,
             loadImage: function() {
                 document.getElementById('imageInput').click();
             }
@@ -211,7 +212,7 @@
 
         function createWallOutlines() {
             const halfWidth = wallWidth / 2;
-            const lineMaterial = new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 2 });
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: guiSettings.lineWidth });
 
             // Wall positions and rotations (matching wall creation)
             const wallConfigs = [
@@ -252,11 +253,19 @@
 
             if (!iframeShards || iframeShards.length === 0) return;
 
+            // Ensure floor offsets are calculated
+            calculateFloorOffsets(iframeShards);
+
             const halfWidth = wallWidth / 2;
+
+            // Floor geometry dimensions (must match createPortraitWallBox)
+            const cameraAspect = CAMERA_WIDTH / CAMERA_HEIGHT;
+            const floorW = wallWidth * 1.5;
+            const floorD = floorW / cameraAspect;
 
             // Create floor segment outlines
             if (guiSettings.showFloorSegments) {
-                const floorLineMaterial = new THREE.LineBasicMaterial({ color: 0xff00ff });
+                const floorLineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: guiSettings.lineWidth });
 
                 iframeShards.forEach((shard, index) => {
                     if (!shard.maskPoints || shard.maskPoints.length < 3) return;
@@ -264,9 +273,12 @@
                     // Offset and scale mask points to floor 3D space
                     const points = shard.maskPoints.map(p => {
                         // Apply floor offset and scale to 3D units
-                        const x = ((p.x + floorOffsetX) / FLOOR_RES_W - 0.5) * (wallWidth * 1.5);
-                        const z = ((p.y + floorOffsetY) / FLOOR_RES_H - 0.5) * (wallWidth * 1.5 / (CAMERA_WIDTH / CAMERA_HEIGHT));
-                        return new THREE.Vector3(x, 0.02, -z);
+                        // Map canvas coordinates to floor mesh coordinates
+                        const normalizedX = (p.x + floorOffsetX) / FLOOR_RES_W;
+                        const normalizedY = (p.y + floorOffsetY) / FLOOR_RES_H;
+                        const x = (normalizedX - 0.5) * floorW;
+                        const z = (normalizedY - 0.5) * floorD;
+                        return new THREE.Vector3(x, 0.02, z);
                     });
                     // Close the loop
                     points.push(points[0].clone());
@@ -280,7 +292,7 @@
 
             // Create wall segment outlines
             if (guiSettings.showWallSegments) {
-                const wallLineMaterial = new THREE.LineBasicMaterial({ color: 0xffff00 });
+                const wallLineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: guiSettings.lineWidth });
 
                 // Determine which quadrant each shard belongs to based on transformedMaskPoints
                 iframeShards.forEach((shard, index) => {
@@ -304,15 +316,17 @@
                     const qx = (quadrant % 2) * quadrantWidth;
                     const qy = Math.floor(quadrant / 2) * quadrantHeight;
 
-                    // Transform mask points to wall local coordinates (with 90° rotation)
+                    // Transform mask points to wall local coordinates (with 90° CCW rotation)
+                    // The wall texture applies: rotate(-Math.PI/2) which is 90° CCW
+                    // Original quadrant: 1920×1080, After rotation: 1080×1920 mapped to 9×16 wall
                     const points = shard.transformedMaskPoints.map(p => {
-                        // Offset to quadrant local coords
+                        // Offset to quadrant local coords (0 to quadrantWidth/Height)
                         const lx = p.x - qx;
                         const ly = p.y - qy;
-                        // Rotate 90° CCW and scale to wall dimensions
-                        // After rotation: x becomes y, y becomes -x
-                        const wx = ((quadrantHeight - ly) / quadrantHeight - 0.5) * wallWidth;
-                        const wy = (0.5 - lx / quadrantWidth) * wallHeight;
+                        // For 90° CCW rotation: new_x = ly, new_y flipped for correct alignment
+                        // Then normalize and center on wall
+                        const wx = (ly / quadrantHeight - 0.5) * wallWidth;
+                        const wy = (lx / quadrantWidth - 0.5) * wallHeight;
                         return new THREE.Vector3(wx, wy, 0);
                     });
                     points.push(points[0].clone());
@@ -376,6 +390,22 @@
 
             outlinesFolder.add(guiSettings, 'showFloorSegments').name('Floor Segments').onChange((value) => {
                 updateSegmentOutlines();
+            });
+
+            outlinesFolder.add(guiSettings, 'lineWidth', 1, 10, 1).name('Line Width').onChange((value) => {
+                // Update all outline line widths
+                wallOutlines.forEach(line => {
+                    line.material.linewidth = value;
+                    line.material.needsUpdate = true;
+                });
+                wallSegmentOutlines.forEach(line => {
+                    line.material.linewidth = value;
+                    line.material.needsUpdate = true;
+                });
+                floorSegmentOutlines.forEach(line => {
+                    line.material.linewidth = value;
+                    line.material.needsUpdate = true;
+                });
             });
 
             outlinesFolder.open();
