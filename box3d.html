@@ -72,23 +72,22 @@
     <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="version">v5.1</div>
+    <div id="version">v5.2</div>
     <!-- Hidden file input for loading images -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <div id="info">
         <strong>3D Box View</strong><br>
         Drag to rotate | Scroll to zoom<br>
-        Use GUI panel to toggle visibility<br>
-        Load custom source images
+        GUI: visibility & segment outlines
     </div>
     <div id="status">Loading source...</div>
     <div id="container3d"></div>
     <iframe id="sourceFrame" src="index.html"></iframe>
 
     <script>
-        const VERSION = 'v5.1';
+        const VERSION = 'v5.2';
         console.log(`===== box3d.html ${VERSION} =====`);
-        console.log('Standalone client-side version with dat.GUI');
+        console.log('Standalone with segment outlines');
         console.log('Portrait walls: 9 wide × 16 tall');
         console.log('Floor: Camera view reconstruction with centered masks');
 
@@ -103,18 +102,20 @@
         let texturesReady = false;
         let updateInterval = null;
         let gui = null;
-        let centerMarker = null;
-        let wireframeMesh = null;
         let gridHelper = null;
         let customSourceCanvas = null;  // For loaded images
+        let wallOutlines = [];  // Line objects for wall borders
+        let wallSegmentOutlines = [];  // Line objects for wall segment outlines
+        let floorSegmentOutlines = [];  // Line objects for floor segment outlines
 
         // GUI settings
         const guiSettings = {
             showWalls: true,
             showFloor: true,
-            showWireframe: true,
             showGrid: true,
-            showCenter: true,
+            showWallOutlines: false,
+            showWallSegments: false,
+            showFloorSegments: false,
             loadImage: function() {
                 document.getElementById('imageInput').click();
             }
@@ -178,8 +179,8 @@
             // Create the 4-wall box with portrait walls
             createPortraitWallBox();
 
-            // Create center marker (axes helper)
-            createCenterMarker();
+            // Create wall outlines (initially hidden)
+            createWallOutlines();
 
             // Setup dat.GUI
             setupGUI();
@@ -208,29 +209,131 @@
             console.log('3D Box initialized');
         }
 
-        function createCenterMarker() {
-            // Create an axes helper at the center
-            const axesHelper = new THREE.AxesHelper(3);
-            axesHelper.position.set(0, 0.1, 0);
-            boxGroup.add(axesHelper);
+        function createWallOutlines() {
+            const halfWidth = wallWidth / 2;
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 2 });
 
-            // Create a small sphere at center
-            const sphereGeom = new THREE.SphereGeometry(0.3, 16, 16);
-            const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-            const sphere = new THREE.Mesh(sphereGeom, sphereMat);
-            sphere.position.set(0, 0.1, 0);
-            boxGroup.add(sphere);
+            // Wall positions and rotations (matching wall creation)
+            const wallConfigs = [
+                { pos: [0, wallHeight / 2, halfWidth], rot: [0, 0, 0] },           // Front
+                { pos: [halfWidth, wallHeight / 2, 0], rot: [0, -Math.PI / 2, 0] }, // Right
+                { pos: [0, wallHeight / 2, -halfWidth], rot: [0, Math.PI, 0] },     // Back
+                { pos: [-halfWidth, wallHeight / 2, 0], rot: [0, Math.PI / 2, 0] }  // Left
+            ];
 
-            // Group them for toggling
-            centerMarker = new THREE.Group();
-            centerMarker.add(axesHelper.clone());
-            centerMarker.add(sphere.clone());
-            centerMarker.position.set(0, 0, 0);
+            wallConfigs.forEach((config, index) => {
+                // Create rectangle outline for each wall
+                const hw = wallWidth / 2;
+                const hh = wallHeight / 2;
+                const points = [
+                    new THREE.Vector3(-hw, -hh, 0),
+                    new THREE.Vector3(hw, -hh, 0),
+                    new THREE.Vector3(hw, hh, 0),
+                    new THREE.Vector3(-hw, hh, 0),
+                    new THREE.Vector3(-hw, -hh, 0)  // Close the loop
+                ];
 
-            // Remove individual ones and add group
-            boxGroup.remove(axesHelper);
-            boxGroup.remove(sphere);
-            boxGroup.add(centerMarker);
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geometry, lineMaterial.clone());
+                line.position.set(...config.pos);
+                line.rotation.set(...config.rot);
+                line.visible = guiSettings.showWallOutlines;
+                boxGroup.add(line);
+                wallOutlines.push(line);
+            });
+        }
+
+        function updateSegmentOutlines() {
+            // Clear existing segment outlines
+            wallSegmentOutlines.forEach(line => boxGroup.remove(line));
+            wallSegmentOutlines = [];
+            floorSegmentOutlines.forEach(line => boxGroup.remove(line));
+            floorSegmentOutlines = [];
+
+            if (!iframeShards || iframeShards.length === 0) return;
+
+            const halfWidth = wallWidth / 2;
+
+            // Create floor segment outlines
+            if (guiSettings.showFloorSegments) {
+                const floorLineMaterial = new THREE.LineBasicMaterial({ color: 0xff00ff });
+
+                iframeShards.forEach((shard, index) => {
+                    if (!shard.maskPoints || shard.maskPoints.length < 3) return;
+
+                    // Offset and scale mask points to floor 3D space
+                    const points = shard.maskPoints.map(p => {
+                        // Apply floor offset and scale to 3D units
+                        const x = ((p.x + floorOffsetX) / FLOOR_RES_W - 0.5) * (wallWidth * 1.5);
+                        const z = ((p.y + floorOffsetY) / FLOOR_RES_H - 0.5) * (wallWidth * 1.5 / (CAMERA_WIDTH / CAMERA_HEIGHT));
+                        return new THREE.Vector3(x, 0.02, -z);
+                    });
+                    // Close the loop
+                    points.push(points[0].clone());
+
+                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    const line = new THREE.Line(geometry, floorLineMaterial.clone());
+                    boxGroup.add(line);
+                    floorSegmentOutlines.push(line);
+                });
+            }
+
+            // Create wall segment outlines
+            if (guiSettings.showWallSegments) {
+                const wallLineMaterial = new THREE.LineBasicMaterial({ color: 0xffff00 });
+
+                // Determine which quadrant each shard belongs to based on transformedMaskPoints
+                iframeShards.forEach((shard, index) => {
+                    if (!shard.transformedMaskPoints || shard.transformedMaskPoints.length < 3) return;
+
+                    // Get centroid of transformed mask to determine quadrant
+                    const centroid = getPolygonCentroid(shard.transformedMaskPoints);
+                    const quadrant = getQuadrantFromPoint(centroid, sourceCanvas ? sourceCanvas.width : 3840, sourceCanvas ? sourceCanvas.height : 2160);
+
+                    // Wall configs matching wall positions
+                    const wallConfigs = [
+                        { pos: [0, wallHeight / 2, halfWidth + 0.01], rot: [0, 0, 0] },
+                        { pos: [halfWidth + 0.01, wallHeight / 2, 0], rot: [0, -Math.PI / 2, 0] },
+                        { pos: [0, wallHeight / 2, -halfWidth - 0.01], rot: [0, Math.PI, 0] },
+                        { pos: [-halfWidth - 0.01, wallHeight / 2, 0], rot: [0, Math.PI / 2, 0] }
+                    ];
+
+                    const config = wallConfigs[quadrant];
+                    const quadrantWidth = (sourceCanvas ? sourceCanvas.width : 3840) / 2;
+                    const quadrantHeight = (sourceCanvas ? sourceCanvas.height : 2160) / 2;
+                    const qx = (quadrant % 2) * quadrantWidth;
+                    const qy = Math.floor(quadrant / 2) * quadrantHeight;
+
+                    // Transform mask points to wall local coordinates (with 90° rotation)
+                    const points = shard.transformedMaskPoints.map(p => {
+                        // Offset to quadrant local coords
+                        const lx = p.x - qx;
+                        const ly = p.y - qy;
+                        // Rotate 90° CCW and scale to wall dimensions
+                        // After rotation: x becomes y, y becomes -x
+                        const wx = ((quadrantHeight - ly) / quadrantHeight - 0.5) * wallWidth;
+                        const wy = (0.5 - lx / quadrantWidth) * wallHeight;
+                        return new THREE.Vector3(wx, wy, 0);
+                    });
+                    points.push(points[0].clone());
+
+                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    const line = new THREE.Line(geometry, wallLineMaterial.clone());
+                    line.position.set(...config.pos);
+                    line.rotation.set(...config.rot);
+                    boxGroup.add(line);
+                    wallSegmentOutlines.push(line);
+                });
+            }
+        }
+
+        function getQuadrantFromPoint(point, width, height) {
+            const halfW = width / 2;
+            const halfH = height / 2;
+            if (point.x < halfW && point.y < halfH) return 0;  // TL
+            if (point.x >= halfW && point.y < halfH) return 1; // TR
+            if (point.x < halfW && point.y >= halfH) return 2; // BL
+            return 3; // BR
         }
 
         function setupGUI() {
@@ -254,19 +357,28 @@
                 if (floorMesh) floorMesh.visible = value;
             });
 
-            visFolder.add(guiSettings, 'showWireframe').name('Show Wireframe').onChange((value) => {
-                if (wireframeMesh) wireframeMesh.visible = value;
-            });
-
             visFolder.add(guiSettings, 'showGrid').name('Show Grid').onChange((value) => {
                 if (gridHelper) gridHelper.visible = value;
             });
 
-            visFolder.add(guiSettings, 'showCenter').name('Show Center').onChange((value) => {
-                if (centerMarker) centerMarker.visible = value;
+            visFolder.open();
+
+            // Outlines folder
+            const outlinesFolder = gui.addFolder('Outlines');
+
+            outlinesFolder.add(guiSettings, 'showWallOutlines').name('Wall Borders').onChange((value) => {
+                wallOutlines.forEach(line => line.visible = value);
             });
 
-            visFolder.open();
+            outlinesFolder.add(guiSettings, 'showWallSegments').name('Wall Segments').onChange((value) => {
+                updateSegmentOutlines();
+            });
+
+            outlinesFolder.add(guiSettings, 'showFloorSegments').name('Floor Segments').onChange((value) => {
+                updateSegmentOutlines();
+            });
+
+            outlinesFolder.open();
 
             // Source folder
             const sourceFolder = gui.addFolder('Source Image');
@@ -343,19 +455,10 @@
                             if (iframeWindow.shards && iframeWindow.shards.length > 0) {
                                 iframeShards = iframeWindow.shards;
                                 console.log(`Got ${iframeShards.length} shards with mask data after ${shardCheckCount} checks`);
-                                // Log first shard's data for debugging
-                                if (iframeShards[0]) {
-                                    const s = iframeShards[0];
-                                    console.log('First shard maskPoints:', s.maskPoints ? s.maskPoints.length : 'none');
-                                    console.log('First shard transformedMaskPoints:', s.transformedMaskPoints ? s.transformedMaskPoints.length : 'none');
-                                }
+                                // Update segment outlines if enabled
+                                updateSegmentOutlines();
                             } else if (shardCheckCount <= 30 && shardCheckCount % 10 === 0) {
-                                // Log status every second for first 3 seconds
                                 console.log(`Checking for shards... (${shardCheckCount})`);
-                                console.log('  iframeWindow.shards exists:', !!iframeWindow.shards);
-                                if (iframeWindow.shards) {
-                                    console.log('  iframeWindow.shards.length:', iframeWindow.shards.length);
-                                }
                             }
                         }
                         updateFloorTexture();
@@ -602,18 +705,6 @@
             leftWall.position.set(-halfWidth, wallHeight / 2, 0);
             leftWall.userData = { quadrant: 3, name: 'Left' };
             boxGroup.add(leftWall);
-
-            // Wireframe box (9×16×9)
-            const wireframeGeometry = new THREE.BoxGeometry(wallWidth, wallHeight, wallWidth);
-            const wireframeMaterial = new THREE.MeshBasicMaterial({
-                color: 0xffffff,
-                wireframe: true,
-                transparent: true,
-                opacity: 0.3
-            });
-            wireframeMesh = new THREE.Mesh(wireframeGeometry, wireframeMaterial);
-            wireframeMesh.position.y = wallHeight / 2;
-            boxGroup.add(wireframeMesh);
 
             // Floor grid
             gridHelper = new THREE.GridHelper(wallWidth * 2, 18, 0x333333, 0x222222);
