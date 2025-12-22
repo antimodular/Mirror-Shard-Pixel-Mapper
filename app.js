@@ -1,7 +1,7 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
-const VERSION = '5.0 - Standalone';
+const VERSION = '5.1 - Pan/Zoom';
 const IMAGE_PATH = 'data/images/';  // New image path
 
 // Global state
@@ -10,8 +10,25 @@ let shaderInfo;
 let sourceTexture;
 let shards = [];
 window.shards = shards;  // Expose globally for cross-frame access
+
+// Function to load custom image from data URL (called from box3d.html)
+window.loadCustomImage = async function(dataUrl) {
+    try {
+        sourceTexture = await loadImageTexture(dataUrl);
+        console.log('Custom image loaded via loadCustomImage');
+        return true;
+    } catch (e) {
+        console.error('Failed to load custom image:', e);
+        return false;
+    }
+};
 let currentImage = null;
-let currentImagePath = IMAGE_PATH + 'grid.jpg';
+let currentImagePath = IMAGE_PATH + 'source_oath.png';
+
+// Pan and zoom controls
+let sourceOffsetX = 0.0;
+let sourceOffsetY = 0.0;
+let sourceScale = 1.0;
 let debugView = false;
 let showAllShards = true;
 let currentShardIndex = 0;
@@ -526,7 +543,11 @@ function render() {
     // Set uniforms
     gl.uniform2f(shaderInfo.uniformLocations.resolution, sourceTexture.width, sourceTexture.height);
     gl.uniform1i(shaderInfo.uniformLocations.debugView, debugView ? 1 : 0);
-    
+
+    // Pan and zoom uniforms
+    gl.uniform2f(shaderInfo.uniformLocations.sourceOffset, sourceOffsetX, sourceOffsetY);
+    gl.uniform1f(shaderInfo.uniformLocations.sourceScale, sourceScale);
+
     gl.uniform4f(shaderInfo.uniformLocations.bgColor, bg.r, bg.g, bg.b, bg.a);
     
     // Update numShards uniform based on visible shards
@@ -587,6 +608,12 @@ function setupControls() {
     imageSelect.addEventListener('change', async (e) => {
         currentImagePath = IMAGE_PATH + e.target.value;
         sourceTexture = await loadImageTexture(currentImagePath);
+
+        // If the 3D view is enabled, the box walls need a refresh because they
+        // snapshot the current canvas into quadrant textures.
+        if (typeof window.update3DTextures === 'function') {
+            window.update3DTextures();
+        }
     });
     
     document.getElementById('debugView').addEventListener('change', (e) => {
@@ -668,6 +695,37 @@ function setupDatGUI() {
             }
         });
         viewFolder.open();
+
+        // Add Source Transform folder for pan and zoom
+        const transformFolder = gui.addFolder('Source Transform');
+        const transformControls = {
+            offsetX: sourceOffsetX,
+            offsetY: sourceOffsetY,
+            scale: sourceScale,
+            reset: function() {
+                sourceOffsetX = 0.0;
+                sourceOffsetY = 0.0;
+                sourceScale = 1.0;
+                this.offsetX = 0.0;
+                this.offsetY = 0.0;
+                this.scale = 1.0;
+                // Update GUI controllers
+                for (let c of transformFolder.__controllers) {
+                    c.updateDisplay();
+                }
+            }
+        };
+        transformFolder.add(transformControls, 'offsetX', -1.0, 1.0, 0.01).name('Pan X').onChange((val) => {
+            sourceOffsetX = val;
+        });
+        transformFolder.add(transformControls, 'offsetY', -1.0, 1.0, 0.01).name('Pan Y').onChange((val) => {
+            sourceOffsetY = val;
+        });
+        transformFolder.add(transformControls, 'scale', 0.5, 20.0, 0.1).name('Zoom').onChange((val) => {
+            sourceScale = val;
+        });
+        transformFolder.add(transformControls, 'reset').name('Reset Transform');
+        transformFolder.open();
     } catch (e) {
         console.error('Error setting up dat.GUI:', e);
     }

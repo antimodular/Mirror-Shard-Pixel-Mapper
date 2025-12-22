@@ -174,6 +174,13 @@ function update3DTextures() {
     const wallArray = [walls.front, walls.right, walls.back, walls.left];
     
     wallArray.forEach((wall, index) => {
+        // Dispose previous material/texture to avoid leaking GPU memory when swapping images
+        if (wall.material) {
+            const oldMap = wall.material.map;
+            if (oldMap && typeof oldMap.dispose === 'function') oldMap.dispose();
+            if (typeof wall.material.dispose === 'function') wall.material.dispose();
+        }
+
         // Create a canvas for this quadrant
         const qCanvas = document.createElement('canvas');
         qCanvas.width = quadrantWidth;

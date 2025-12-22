@@ -23,6 +23,10 @@ uniform int u_numShards;
 uniform int u_currentShardIndex;
 uniform bool u_debugView;
 
+// Pan and zoom controls
+uniform vec2 u_sourceOffset;  // Pan offset in normalized coords (-1 to 1)
+uniform float u_sourceScale;  // Zoom scale (1.0 = no zoom)
+
 // Individual matrices (up to 14 shards)
 uniform mat4 u_invH0;
 uniform mat4 u_invH1;
@@ -139,10 +143,16 @@ void main() {
         
         // Convert to normalized texture coordinates
         vec2 normalizedTexCoord = sourceCoord / u_resolution;
-        
+
+        // Apply pan and zoom
+        // Scale around center (0.5, 0.5) - multiply to zoom in when scale > 1
+        normalizedTexCoord = (normalizedTexCoord - 0.5) * u_sourceScale + 0.5;
+        // Apply pan offset
+        normalizedTexCoord += u_sourceOffset;
+
         // Ensure coordinates are in valid range for texture sampling
         normalizedTexCoord = clamp(normalizedTexCoord, 0.0, 1.0);
-        
+
         color = texture(u_sourceTex, normalizedTexCoord);
         
         // If debug view is enabled, tint the shards with color
@@ -219,6 +229,8 @@ function initShaderProgram(gl) {
             currentShardIndex: gl.getUniformLocation(program, 'u_currentShardIndex'),
             debugView: gl.getUniformLocation(program, 'u_debugView'),
             bgColor: gl.getUniformLocation(program, 'u_bgColor'),
+            sourceOffset: gl.getUniformLocation(program, 'u_sourceOffset'),
+            sourceScale: gl.getUniformLocation(program, 'u_sourceScale'),
             invH0: gl.getUniformLocation(program, 'u_invH0'),
             invH1: gl.getUniformLocation(program, 'u_invH1'),
             invH2: gl.getUniformLocation(program, 'u_invH2'),

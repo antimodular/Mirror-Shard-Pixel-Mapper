@@ -78,7 +78,7 @@
     <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="version">v5.5.2</div>
+    <div id="version">v5.5.4</div>
     <!-- Hidden file input for loading images -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <div id="info">
@@ -91,7 +91,7 @@
     <iframe id="sourceFrame" src="index.html"></iframe>
 
     <script>
-        const VERSION = 'v5.5.2';
+        const VERSION = 'v5.5.4';
         console.log(`===== box3d.html ${VERSION} =====`);
         console.log('Fat lines (Line2) for adjustable width, reorganized GUI');
         console.log('Portrait walls: 9 wide × 16 tall');
@@ -168,8 +168,8 @@
             controls.enableDamping = true;
             controls.dampingFactor = 0.05;
             controls.target.set(0, wallHeight / 3, 0);
-            controls.minDistance = 5;
-            controls.maxDistance = 60;
+            controls.minDistance = 1;
+            controls.maxDistance = 40;
 
             // Lights
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
@@ -315,13 +315,19 @@
 
             // Create wall segment outlines using Line2 (fat lines)
             if (guiSettings.showWallSegments) {
+                // Shard coordinates are always in 3840x2160 space (calibration reference)
+                const REF_WIDTH = 3840;
+                const REF_HEIGHT = 2160;
+                const refQuadrantWidth = REF_WIDTH / 2;   // 1920
+                const refQuadrantHeight = REF_HEIGHT / 2; // 1080
+
                 // Determine which quadrant each shard belongs to based on transformedMaskPoints
                 iframeShards.forEach((shard, index) => {
                     if (!shard.transformedMaskPoints || shard.transformedMaskPoints.length < 3) return;
 
                     // Get centroid of transformed mask to determine quadrant
                     const centroid = getPolygonCentroid(shard.transformedMaskPoints);
-                    const quadrant = getQuadrantFromPoint(centroid, sourceCanvas ? sourceCanvas.width : 3840, sourceCanvas ? sourceCanvas.height : 2160);
+                    const quadrant = getQuadrantFromPoint(centroid, REF_WIDTH, REF_HEIGHT);
 
                     // Wall configs matching wall positions
                     const wallConfigs = [
@@ -332,10 +338,8 @@
                     ];
 
                     const config = wallConfigs[quadrant];
-                    const quadrantWidth = (sourceCanvas ? sourceCanvas.width : 3840) / 2;
-                    const quadrantHeight = (sourceCanvas ? sourceCanvas.height : 2160) / 2;
-                    const qx = (quadrant % 2) * quadrantWidth;
-                    const qy = Math.floor(quadrant / 2) * quadrantHeight;
+                    const qx = (quadrant % 2) * refQuadrantWidth;
+                    const qy = Math.floor(quadrant / 2) * refQuadrantHeight;
 
                     // Transform mask points to wall local coordinates (with 90° CCW rotation)
                     // Build flat position array for Line2
@@ -344,8 +348,8 @@
                         const lx = p.x - qx;
                         const ly = p.y - qy;
                         // For 90° CCW rotation: new_x = ly, new_y flipped for correct alignment
-                        const wx = (ly / quadrantHeight - 0.5) * wallWidth;
-                        const wy = (lx / quadrantWidth - 0.5) * wallHeight;
+                        const wx = (ly / refQuadrantHeight - 0.5) * wallWidth;
+                        const wy = (lx / refQuadrantWidth - 0.5) * wallHeight;
                         positions.push(wx, wy, 0);
                     });
                     // Close the loop
@@ -401,7 +405,7 @@
                 wallOutlines.forEach(line => line.visible = value);
             });
 
-            wallsFolder.add(guiSettings, 'showWallSegments').name('Wall Segments').onChange((value) => {
+            wallsFolder.add(guiSettings, 'showWallSegments').name('Shard Outlines').onChange((value) => {
                 updateSegmentOutlines();
             });
 
@@ -414,7 +418,7 @@
                 if (floorMesh) floorMesh.visible = value;
             });
 
-            floorFolder.add(guiSettings, 'showFloorSegments').name('Floor Segments').onChange((value) => {
+            floorFolder.add(guiSettings, 'showFloorSegments').name('Shard Outlines').onChange((value) => {
                 updateSegmentOutlines();
             });
 
@@ -461,31 +465,24 @@
                 document.getElementById('status').textContent = `Loading: ${file.name}...`;
 
                 const reader = new FileReader();
-                reader.onload = (event) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        // Create a canvas with the loaded image
-                        if (!customSourceCanvas) {
-                            customSourceCanvas = document.createElement('canvas');
+                reader.onload = async (event) => {
+                    const dataUrl = event.target.result;
+
+                    // Load the image into the iframe's shader pipeline
+                    if (iframeWindow && iframeWindow.loadCustomImage) {
+                        const success = await iframeWindow.loadCustomImage(dataUrl);
+                        if (success) {
+                            console.log('Custom image loaded into shader pipeline');
+                            document.getElementById('status').textContent =
+                                `Custom image loaded | Shader processing active`;
+                        } else {
+                            console.error('Failed to load custom image into shader');
+                            document.getElementById('status').textContent = 'Error loading image';
                         }
-                        customSourceCanvas.width = img.width;
-                        customSourceCanvas.height = img.height;
-                        const ctx = customSourceCanvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
-
-                        console.log(`Image loaded: ${img.width}x${img.height}`);
-                        document.getElementById('status').textContent =
-                            `Custom: ${img.width}x${img.height} | Using custom source`;
-
-                        // Use custom canvas for rendering
-                        sourceCanvas = customSourceCanvas;
-
-                        // Force texture update
-                        texturesReady = false;
-                        updateWallTextures();
-                        updateFloorTexture();
-                    };
-                    img.src = event.target.result;
+                    } else {
+                        console.error('iframe loadCustomImage not available');
+                        document.getElementById('status').textContent = 'Error: iframe not ready';
+                    }
                 };
                 reader.readAsDataURL(file);
 
