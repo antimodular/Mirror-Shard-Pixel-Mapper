@@ -1,7 +1,7 @@
 // Constants
 const DISPLAY_WIDTH = 3840;
 const DISPLAY_HEIGHT = 2160;
-const VERSION = '5.3 - Safari Fix';
+const VERSION = '5.4 - GUI Update';
 const IMAGE_PATH = 'data/images/';  // New image path
 
 // Global state
