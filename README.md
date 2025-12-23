@@ -8,7 +8,7 @@ The core idea is to **pre-warp** a 4K source image so that, when viewed indirect
 
 ## Live Demo
 
-**[View Live Demo on GitHub Pages](https://stephanschulz.ca/light-network/)**
+**[View Live Demo on GitHub Pages](https://antimodular.github.io/Mirror-Shard-Pixel-Mapper/box3d.html/)**
 
 ## Screenshots
 

@@ -36,7 +36,7 @@ window.getSourceTransform = function() {
 };
 
 let currentImage = null;
-let currentImagePath = IMAGE_PATH + 'source_oath.png';
+let currentImagePath = IMAGE_PATH + 'grid.jpg';
 
 // Pan and zoom controls
 let sourceOffsetX = 0.0;

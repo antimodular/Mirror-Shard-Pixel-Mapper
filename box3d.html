@@ -499,6 +499,14 @@
             sourceFolder.add(guiSettings, 'sourceOffsetY', -1080, 1080, 1).name('Offset Y');
             sourceFolder.open();
 
+            // GitHub link at bottom
+            const linkObj = {
+                github: function() {
+                    window.open('https://github.com/antimodular/Mirror-Shard-Pixel-Mapper', '_blank');
+                }
+            };
+            gui.add(linkObj, 'github').name('View on GitHub');
+
             // Close the GUI panel by default
             gui.close();
         }

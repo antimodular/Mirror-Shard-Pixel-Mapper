@@ -135,6 +135,10 @@ noGit/
 *.mp4
 *.zip
 *.png
+!data/images/*.png
+!images/*.png
+!images/*.jpg
+!images/**/*.jpg
 *.csv
 *.mp3
 *.wav
