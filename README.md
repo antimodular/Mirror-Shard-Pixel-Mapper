@@ -10,6 +10,16 @@ The core idea is to **pre-warp** a 4K source image so that, when viewed indirect
 
 **[View Live Demo on GitHub Pages](https://stephanschulz.ca/light-network/)**
 
+## Screenshots
+
+### The 3D Box Visualization
+
+![The app](./images/Screenshot-app.jpg)
+
+### Source (top) + masked/transformed output (bottom)
+
+![Source and transformed result](./images/Screenshot-mapping.jpg)
+
 ## What this visualization represents
 
 - **Physical installation model**:
@@ -75,21 +85,22 @@ The scale and offset controls modify the source image BEFORE it goes through the
 - **Debug colors**: Show colored regions per shard
 - **Background gray**: Adjust scene background brightness
 
-## Screenshots
 
-### Source (top) + masked/transformed output (bottom)
+### Physical Installation
 
-![The app](./Screenshot-app.jpg)
-![Source and transformed result](./Screenshot-mapping.jpg)
+The box3d.html visualization models this physical setup - four display walls surrounding broken mirror shards that reflect and combine the warped image fragments.
+
+![Physical installation](./images/photo.jpg)
+
 ## Finished artwork photos
 
 From `artwork/`:
 
-![Broken Mirror Poets — photo 1](./artwork/broken_mirror_poets_montreal_RLH_001.jpg)
+![Broken Mirror Poets — photo 1](./images/artwork/broken_mirror_poets_montreal_RLH_001.jpg)
 
-![Broken Mirror Poets — photo 2](./artwork/broken_mirror_poets_montreal_RLH_002.jpg)
+![Broken Mirror Poets — photo 2](./images/artwork/broken_mirror_poets_montreal_RLH_002.jpg)
 
-![Broken Mirror Poets — photo 3](./artwork/broken_mirror_poets_montreal_RLH_003.jpg)
+![Broken Mirror Poets — photo 3](./images/artwork/broken_mirror_poets_montreal_RLH_003.jpg)
 
 ## Running
 
