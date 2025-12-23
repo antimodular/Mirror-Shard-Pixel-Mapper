@@ -11,19 +11,6 @@
             background: #000;
             font-family: Arial, sans-serif;
         }
-        #version {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            color: #0f0;
-            background: rgba(0,0,0,0.8);
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 14px;
-            z-index: 100;
-            border: 1px solid #0f0;
-        }
         #info {
             position: absolute;
             top: 10px;
@@ -78,8 +65,7 @@
     <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="version">v5.8 - Quadrant Mapping + Flip</div>
-    <!-- Hidden file input for loading images -->
+        <!-- Hidden file input for loading images -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <div id="info">
         <strong>3D Box View</strong><br>
@@ -442,6 +428,10 @@
             gui = new dat.GUI({ autoPlace: true });
             gui.domElement.style.marginTop = '50px';
 
+            // Version at top of GUI
+            const versionObj = { version: 'v5.9' };
+            gui.add(versionObj, 'version').name('Version').listen();
+
             // Walls folder
             const wallsFolder = gui.addFolder('Walls');
 
@@ -460,25 +450,6 @@
             });
 
             wallsFolder.add(guiSettings, 'showWallSegments').name('Shard Outlines').onChange((value) => {
-                updateSegmentOutlines();
-            });
-
-            // Quadrant mapping controls (0=TL, 1=TR, 2=BL, 3=BR)
-            const quadrantLabels = { 0: 'TL', 1: 'TR', 2: 'BL', 3: 'BR' };
-            wallsFolder.add(guiSettings, 'frontQuadrant', { TL: 0, TR: 1, BL: 2, BR: 3 }).name('Front ←').onChange(() => {
-                updateWallTextures();
-                updateSegmentOutlines();
-            });
-            wallsFolder.add(guiSettings, 'rightQuadrant', { TL: 0, TR: 1, BL: 2, BR: 3 }).name('Right ←').onChange(() => {
-                updateWallTextures();
-                updateSegmentOutlines();
-            });
-            wallsFolder.add(guiSettings, 'backQuadrant', { TL: 0, TR: 1, BL: 2, BR: 3 }).name('Back ←').onChange(() => {
-                updateWallTextures();
-                updateSegmentOutlines();
-            });
-            wallsFolder.add(guiSettings, 'leftQuadrant', { TL: 0, TR: 1, BL: 2, BR: 3 }).name('Left ←').onChange(() => {
-                updateWallTextures();
                 updateSegmentOutlines();
             });
 
@@ -530,8 +501,11 @@
 
             // Source folder
             const sourceFolder = gui.addFolder('Source Image');
-            sourceFolder.add(guiSettings, 'loadImage').name('Load New Image...');
+            sourceFolder.add(guiSettings, 'loadImage').name('Load New 4K Image...');
             sourceFolder.open();
+
+            // Close the GUI panel by default
+            gui.close();
         }
 
         function setupFileInput() {
