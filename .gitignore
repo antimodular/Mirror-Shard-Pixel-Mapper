@@ -134,7 +134,6 @@ noGit/
 *.avi
 *.mp4
 *.zip
-*.png
 !data/images/*.png
 !images/*.png
 !images/*.jpg
@@ -153,3 +152,4 @@ backup/
 models/
 browse.db
 browse.db-shm
+.claude
