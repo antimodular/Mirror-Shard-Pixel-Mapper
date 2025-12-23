@@ -78,7 +78,7 @@
     <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="version">v5.6.2 - WebGL Floor</div>
+    <div id="version">v5.8 - Quadrant Mapping + Flip</div>
     <!-- Hidden file input for loading images -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <div id="info">
@@ -91,9 +91,9 @@
     <iframe id="sourceFrame" src="index.html"></iframe>
 
     <script>
-        const VERSION = 'v5.5.4';
+        const VERSION = 'v5.8';
         console.log(`===== box3d.html ${VERSION} =====`);
-        console.log('Fat lines (Line2) for adjustable width, reorganized GUI');
+        console.log('Quadrant mapping with horizontal flip for front/back');
         console.log('Portrait walls: 9 wide × 16 tall');
         console.log('Floor: Camera view reconstruction with centered masks');
 
@@ -123,10 +123,38 @@
             showWallSegments: false,
             showFloorSegments: false,
             lineWidth: 1,
+            debugColors: false,
+            // Quadrant mapping: which source quadrant (0-3) goes to which wall
+            // Quadrants: 0=TL, 1=TR, 2=BL, 3=BR
+            frontQuadrant: 1,  // TR
+            rightQuadrant: 3,  // BR
+            backQuadrant: 2,   // BL
+            leftQuadrant: 0,   // TL
+            // Flip settings for walls that need horizontal mirroring
+            flipFront: true,
+            flipBack: true,
             loadImage: function() {
                 document.getElementById('imageInput').click();
             }
         };
+
+        // Unique colors for each shard (for debug mode)
+        const shardColors = [
+            [1.0, 0.0, 0.0],   // 0: Red
+            [0.0, 1.0, 0.0],   // 1: Green
+            [0.0, 0.0, 1.0],   // 2: Blue
+            [1.0, 1.0, 0.0],   // 3: Yellow
+            [1.0, 0.0, 1.0],   // 4: Magenta
+            [0.0, 1.0, 1.0],   // 5: Cyan
+            [1.0, 0.5, 0.0],   // 6: Orange
+            [0.5, 0.0, 1.0],   // 7: Purple
+            [0.0, 0.5, 0.5],   // 8: Teal
+            [0.5, 0.5, 0.0],   // 9: Olive
+            [0.5, 0.0, 0.0],   // 10: Maroon
+            [0.0, 0.5, 0.0],   // 11: Dark Green
+            [1.0, 0.5, 0.5],   // 12: Light Red
+            [0.5, 0.5, 1.0],   // 13: Light Blue
+        ];
 
         // Wall dimensions (in 3D units)
         const wallWidth = 9;
@@ -321,25 +349,47 @@
                 const refQuadrantWidth = REF_WIDTH / 2;   // 1920
                 const refQuadrantHeight = REF_HEIGHT / 2; // 1080
 
+                // Configurable quadrant mapping: which source quadrant goes to which wall
+                const quadrantMapping = [
+                    guiSettings.frontQuadrant,
+                    guiSettings.rightQuadrant,
+                    guiSettings.backQuadrant,
+                    guiSettings.leftQuadrant
+                ];
+
+                // Create reverse lookup: sourceQuadrant -> wallIndex
+                const quadrantToWall = {};
+                quadrantMapping.forEach((sourceQuadrant, wallIndex) => {
+                    quadrantToWall[sourceQuadrant] = wallIndex;
+                });
+
+                // Wall configs matching wall positions
+                const wallConfigs = [
+                    { pos: [0, wallHeight / 2, halfWidth + 0.01], rot: [0, 0, 0] },           // Front
+                    { pos: [halfWidth + 0.01, wallHeight / 2, 0], rot: [0, -Math.PI / 2, 0] }, // Right
+                    { pos: [0, wallHeight / 2, -halfWidth - 0.01], rot: [0, Math.PI, 0] },     // Back
+                    { pos: [-halfWidth - 0.01, wallHeight / 2, 0], rot: [0, Math.PI / 2, 0] }  // Left
+                ];
+
                 // Determine which quadrant each shard belongs to based on transformedMaskPoints
                 iframeShards.forEach((shard, index) => {
                     if (!shard.transformedMaskPoints || shard.transformedMaskPoints.length < 3) return;
 
-                    // Get centroid of transformed mask to determine quadrant
+                    // Get centroid of transformed mask to determine source quadrant
                     const centroid = getPolygonCentroid(shard.transformedMaskPoints);
-                    const quadrant = getQuadrantFromPoint(centroid, REF_WIDTH, REF_HEIGHT);
+                    const sourceQuadrant = getQuadrantFromPoint(centroid, REF_WIDTH, REF_HEIGHT);
 
-                    // Wall configs matching wall positions
-                    const wallConfigs = [
-                        { pos: [0, wallHeight / 2, halfWidth + 0.01], rot: [0, 0, 0] },
-                        { pos: [halfWidth + 0.01, wallHeight / 2, 0], rot: [0, -Math.PI / 2, 0] },
-                        { pos: [0, wallHeight / 2, -halfWidth - 0.01], rot: [0, Math.PI, 0] },
-                        { pos: [-halfWidth - 0.01, wallHeight / 2, 0], rot: [0, Math.PI / 2, 0] }
-                    ];
+                    // Find which wall displays this source quadrant
+                    const wallIndex = quadrantToWall[sourceQuadrant];
+                    if (wallIndex === undefined) return;  // No wall configured for this quadrant
 
-                    const config = wallConfigs[quadrant];
-                    const qx = (quadrant % 2) * refQuadrantWidth;
-                    const qy = Math.floor(quadrant / 2) * refQuadrantHeight;
+                    // Check if this wall needs horizontal flipping
+                    const needsFlip = (wallIndex === 0 && guiSettings.flipFront) ||
+                                      (wallIndex === 2 && guiSettings.flipBack);
+
+                    const config = wallConfigs[wallIndex];
+                    const qx = (sourceQuadrant % 2) * refQuadrantWidth;
+                    const qy = Math.floor(sourceQuadrant / 2) * refQuadrantHeight;
 
                     // Transform mask points to wall local coordinates (with 90° CCW rotation)
                     // Build flat position array for Line2
@@ -348,8 +398,12 @@
                         const lx = p.x - qx;
                         const ly = p.y - qy;
                         // For 90° CCW rotation: new_x = ly, new_y flipped for correct alignment
-                        const wx = (ly / refQuadrantHeight - 0.5) * wallWidth;
+                        let wx = (ly / refQuadrantHeight - 0.5) * wallWidth;
                         const wy = (lx / refQuadrantWidth - 0.5) * wallHeight;
+                        // Apply horizontal flip if needed
+                        if (needsFlip) {
+                            wx = -wx;
+                        }
                         positions.push(wx, wy, 0);
                     });
                     // Close the loop
@@ -409,6 +463,25 @@
                 updateSegmentOutlines();
             });
 
+            // Quadrant mapping controls (0=TL, 1=TR, 2=BL, 3=BR)
+            const quadrantLabels = { 0: 'TL', 1: 'TR', 2: 'BL', 3: 'BR' };
+            wallsFolder.add(guiSettings, 'frontQuadrant', { TL: 0, TR: 1, BL: 2, BR: 3 }).name('Front ←').onChange(() => {
+                updateWallTextures();
+                updateSegmentOutlines();
+            });
+            wallsFolder.add(guiSettings, 'rightQuadrant', { TL: 0, TR: 1, BL: 2, BR: 3 }).name('Right ←').onChange(() => {
+                updateWallTextures();
+                updateSegmentOutlines();
+            });
+            wallsFolder.add(guiSettings, 'backQuadrant', { TL: 0, TR: 1, BL: 2, BR: 3 }).name('Back ←').onChange(() => {
+                updateWallTextures();
+                updateSegmentOutlines();
+            });
+            wallsFolder.add(guiSettings, 'leftQuadrant', { TL: 0, TR: 1, BL: 2, BR: 3 }).name('Left ←').onChange(() => {
+                updateWallTextures();
+                updateSegmentOutlines();
+            });
+
             wallsFolder.open();
 
             // Floor folder
@@ -445,6 +518,12 @@
                     line.material.linewidth = value;
                     line.material.needsUpdate = true;
                 });
+            });
+
+            settingsFolder.add(guiSettings, 'debugColors').name('Debug Colors').onChange((value) => {
+                // Update both floor and wall textures to show/hide debug colors
+                updateFloorTexture();
+                updateWallTextures();
             });
 
             settingsFolder.open();
@@ -625,10 +704,18 @@
             uniform sampler2D sourceTexture;
             uniform vec2 sourceResolution;
             uniform mat3 homography;
+            uniform bool debugMode;
+            uniform vec3 debugColor;
 
             varying vec2 vFloorCoord;
 
             void main() {
+                // Debug mode: show solid color
+                if (debugMode) {
+                    gl_FragColor = vec4(debugColor, 1.0);
+                    return;
+                }
+
                 // Apply homography to get source coordinates
                 vec3 srcHomog = homography * vec3(vFloorCoord, 1.0);
                 vec2 srcCoord = srcHomog.xy / srcHomog.z;
@@ -801,11 +888,14 @@
 
                     const geometry = new THREE.ShapeGeometry(shape);
 
+                    const color = shardColors[index % shardColors.length];
                     const material = new THREE.ShaderMaterial({
                         uniforms: {
                             sourceTexture: { value: floorSourceTexture },
                             sourceResolution: { value: new THREE.Vector2(sourceW, sourceH) },
-                            homography: { value: homography }
+                            homography: { value: homography },
+                            debugMode: { value: guiSettings.debugColors },
+                            debugColor: { value: new THREE.Vector3(color[0], color[1], color[2]) }
                         },
                         vertexShader: floorVertexShader,
                         fragmentShader: floorFragmentShader,
@@ -954,8 +1044,22 @@
                 const quadrantWidth = sourceCanvas.width / 2;   // 1920 (landscape width)
                 const quadrantHeight = sourceCanvas.height / 2; // 1080 (landscape height)
 
+                // Reference dimensions for shard coordinates (always 3840x2160)
+                const REF_WIDTH = 3840;
+                const REF_HEIGHT = 2160;
+                const refQuadrantWidth = REF_WIDTH / 2;   // 1920
+                const refQuadrantHeight = REF_HEIGHT / 2; // 1080
+
                 const walls = boxGroup.userData.walls;
                 const wallArray = [walls.front, walls.right, walls.back, walls.left];
+
+                // Configurable quadrant mapping: which source quadrant goes to which wall
+                const quadrantMapping = [
+                    guiSettings.frontQuadrant,
+                    guiSettings.rightQuadrant,
+                    guiSettings.backQuadrant,
+                    guiSettings.leftQuadrant
+                ];
 
                 // Quadrant layout in source:
                 // [0: TL] [1: TR]
@@ -964,7 +1068,14 @@
                 // Walls are 9x16 (portrait 9:16)
                 // So we rotate each quadrant 90° CCW to fit
 
-                wallArray.forEach((wall, index) => {
+                wallArray.forEach((wall, wallIndex) => {
+                    // Get the source quadrant for this wall from the mapping
+                    const sourceQuadrant = quadrantMapping[wallIndex];
+
+                    // Check if this wall needs horizontal flipping
+                    const needsFlip = (wallIndex === 0 && guiSettings.flipFront) ||
+                                      (wallIndex === 2 && guiSettings.flipBack);
+
                     // Create a canvas with ROTATED dimensions (portrait)
                     // After 90° rotation: 1080 wide × 1920 tall
                     const qCanvas = document.createElement('canvas');
@@ -972,27 +1083,88 @@
                     qCanvas.height = quadrantWidth;   // 1920 (becomes height after rotation)
                     const qCtx = qCanvas.getContext('2d');
 
-                    // Calculate source position for this quadrant
-                    const sx = (index % 2) * quadrantWidth;
-                    const sy = Math.floor(index / 2) * quadrantHeight;
+                    if (guiSettings.debugColors && iframeShards && iframeShards.length > 0) {
+                        // Debug mode: draw colored polygons for each shard in this quadrant
+                        qCtx.fillStyle = '#000000';
+                        qCtx.fillRect(0, 0, qCanvas.width, qCanvas.height);
 
-                    // Rotate 90° counter-clockwise:
-                    // 1. Translate to center of destination
-                    // 2. Rotate -90° (CCW)
-                    // 3. Draw image centered
+                        // Quadrant origin in reference coords (use sourceQuadrant)
+                        const qx = (sourceQuadrant % 2) * refQuadrantWidth;
+                        const qy = Math.floor(sourceQuadrant / 2) * refQuadrantHeight;
 
-                    qCtx.save();
-                    // Move to center of destination canvas
-                    qCtx.translate(qCanvas.width / 2, qCanvas.height / 2);
-                    // Rotate 90° CCW (-π/2)
-                    qCtx.rotate(-Math.PI / 2);
-                    // Draw the quadrant centered (offset by half its original dimensions)
-                    qCtx.drawImage(
-                        sourceCanvas,
-                        sx, sy, quadrantWidth, quadrantHeight,
-                        -quadrantWidth / 2, -quadrantHeight / 2, quadrantWidth, quadrantHeight
-                    );
-                    qCtx.restore();
+                        iframeShards.forEach((shard, shardIndex) => {
+                            if (!shard.transformedMaskPoints || shard.transformedMaskPoints.length < 3) return;
+
+                            // Check if this shard belongs to the source quadrant
+                            const centroid = getPolygonCentroid(shard.transformedMaskPoints);
+                            const shardQuadrant = getQuadrantFromPoint(centroid, REF_WIDTH, REF_HEIGHT);
+                            if (shardQuadrant !== sourceQuadrant) return;
+
+                            // Get debug color
+                            const color = shardColors[shardIndex % shardColors.length];
+                            const colorStr = `rgb(${Math.round(color[0]*255)}, ${Math.round(color[1]*255)}, ${Math.round(color[2]*255)})`;
+
+                            // Transform points to rotated wall canvas coordinates
+                            // 1. Subtract quadrant origin to get local coords (0-1920, 0-1080)
+                            // 2. Apply 90° CCW rotation: new_x = old_y, new_y = quadrantWidth - old_x
+                            // 3. Apply horizontal flip if needed
+                            qCtx.beginPath();
+                            shard.transformedMaskPoints.forEach((p, i) => {
+                                const lx = p.x - qx;  // Local x in quadrant (0 to refQuadrantWidth)
+                                const ly = p.y - qy;  // Local y in quadrant (0 to refQuadrantHeight)
+
+                                // Scale to actual canvas quadrant size
+                                const scaledX = lx * (quadrantWidth / refQuadrantWidth);
+                                const scaledY = ly * (quadrantHeight / refQuadrantHeight);
+
+                                // 90° CCW rotation for portrait orientation
+                                let rx = scaledY;
+                                const ry = quadrantWidth - scaledX;
+
+                                // Apply horizontal flip if needed
+                                if (needsFlip) {
+                                    rx = qCanvas.width - rx;
+                                }
+
+                                if (i === 0) {
+                                    qCtx.moveTo(rx, ry);
+                                } else {
+                                    qCtx.lineTo(rx, ry);
+                                }
+                            });
+                            qCtx.closePath();
+                            qCtx.fillStyle = colorStr;
+                            qCtx.fill();
+                        });
+                    } else {
+                        // Normal mode: draw source texture
+                        // Calculate source position for this quadrant (use sourceQuadrant)
+                        const sx = (sourceQuadrant % 2) * quadrantWidth;
+                        const sy = Math.floor(sourceQuadrant / 2) * quadrantHeight;
+
+                        // Rotate 90° counter-clockwise:
+                        // 1. Translate to center of destination
+                        // 2. Rotate -90° (CCW)
+                        // 3. Apply horizontal flip if needed
+                        // 4. Draw image centered
+
+                        qCtx.save();
+                        // Move to center of destination canvas
+                        qCtx.translate(qCanvas.width / 2, qCanvas.height / 2);
+                        // Apply horizontal flip if needed (before rotation affects different axis)
+                        if (needsFlip) {
+                            qCtx.scale(-1, 1);
+                        }
+                        // Rotate 90° CCW (-π/2)
+                        qCtx.rotate(-Math.PI / 2);
+                        // Draw the quadrant centered (offset by half its original dimensions)
+                        qCtx.drawImage(
+                            sourceCanvas,
+                            sx, sy, quadrantWidth, quadrantHeight,
+                            -quadrantWidth / 2, -quadrantHeight / 2, quadrantWidth, quadrantHeight
+                        );
+                        qCtx.restore();
+                    }
 
                     // Create/update texture
                     const texture = new THREE.CanvasTexture(qCanvas);
