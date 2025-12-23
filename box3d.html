@@ -11,18 +11,6 @@
             background: #000;
             font-family: Arial, sans-serif;
         }
-        #info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            background: rgba(0,0,0,0.7);
-            padding: 12px;
-            border-radius: 5px;
-            z-index: 100;
-            font-family: monospace;
-            font-size: 13px;
-        }
         #container3d {
             width: 100vw;
             height: 100vh;
@@ -55,11 +43,6 @@
 <body>
         <!-- Hidden file input for loading images -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
-    <div id="info">
-        <strong>3D Box View</strong><br>
-        Drag to rotate | Scroll to zoom<br>
-        GUI: visibility & segment outlines
-    </div>
     <div id="container3d"></div>
     <iframe id="sourceFrame" src="index.html"></iframe>
 
@@ -91,7 +74,7 @@
         const guiSettings = {
             showWalls: true,
             showFloor: true,
-            showGrid: true,
+            showGrid: false,
             showWallOutlines: false,
             showWallSegments: false,
             showFloorSegments: false,
@@ -107,7 +90,7 @@
             flipFront: true,
             flipBack: true,
             // Background gray value (0-255)
-            bgGray: 17,  // Default ~0x111111
+            bgGray: 0,  // Default black
             loadImage: function() {
                 document.getElementById('imageInput').click();
             }
@@ -146,7 +129,7 @@
         function init() {
             // Scene
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111111);
+            scene.background = new THREE.Color(0x000000);
 
             const halfWidth = wallWidth / 2;
 
@@ -276,9 +259,8 @@
             const halfWidth = wallWidth / 2;
 
             // Floor geometry dimensions (must match createPortraitWallBox)
-            const cameraAspect = CAMERA_WIDTH / CAMERA_HEIGHT;
-            const floorW = wallWidth * 1.5;
-            const floorD = floorW / cameraAspect;
+            // Square floor that fits inside the box
+            const floorSize = wallWidth;
 
             // Create floor segment outlines using Line2 (fat lines)
             if (guiSettings.showFloorSegments) {
@@ -286,13 +268,14 @@
                     if (!shard.maskPoints || shard.maskPoints.length < 3) return;
 
                     // Offset and scale mask points to floor 3D space
-                    // Build flat position array for Line2
+                    // Use uniform scale to maintain aspect ratio, fit to square
+                    const scale = floorSize / Math.max(FLOOR_RES_W, FLOOR_RES_H);
                     const positions = [];
                     shard.maskPoints.forEach(p => {
-                        const normalizedX = (p.x + floorOffsetX) / FLOOR_RES_W;
-                        const normalizedY = (p.y + floorOffsetY) / FLOOR_RES_H;
-                        const x = (normalizedX - 0.5) * floorW;
-                        const z = (normalizedY - 0.5) * floorD;
+                        const centeredX = p.x + floorOffsetX - FLOOR_RES_W / 2;
+                        const centeredY = p.y + floorOffsetY - FLOOR_RES_H / 2;
+                        const x = centeredX * scale;
+                        const z = centeredY * scale;
                         positions.push(x, 0.02, z);
                     });
                     // Close the loop
@@ -626,15 +609,19 @@
         function initFloorWebGL() {
             if (floorWebGLInitialized) return;
 
+            // Use square render target to match square floor mesh
+            const floorRenderSize = Math.max(FLOOR_RES_W, FLOOR_RES_H);
+
             // Render target for floor texture (use main renderer)
-            floorRenderTarget = new THREE.WebGLRenderTarget(FLOOR_RES_W, FLOOR_RES_H, {
+            floorRenderTarget = new THREE.WebGLRenderTarget(floorRenderSize, floorRenderSize, {
                 minFilter: THREE.LinearFilter,
                 magFilter: THREE.LinearFilter,
                 format: THREE.RGBAFormat
             });
 
-            // Orthographic camera for 2D rendering
-            floorCamera = new THREE.OrthographicCamera(0, FLOOR_RES_W, FLOOR_RES_H, 0, -1, 1);
+            // Orthographic camera for 2D rendering - square, centered
+            const halfSize = floorRenderSize / 2;
+            floorCamera = new THREE.OrthographicCamera(-halfSize, halfSize, halfSize, -halfSize, -1, 1);
             floorCamera.position.z = 1;
 
             // Scene for floor rendering
@@ -812,33 +799,30 @@
                         return;
                     }
 
-                    // Flip Y for WebGL coordinate system (Y=0 at bottom)
-                    const flipY = (p) => ({ x: p.x, y: FLOOR_RES_H - p.y });
+                    // Transform to centered coordinates and flip Y for WebGL
+                    const toCentered = (p) => ({
+                        x: p.x + floorOffsetX - FLOOR_RES_W / 2,
+                        y: -(p.y + floorOffsetY - FLOOR_RES_H / 2)  // Flip Y
+                    });
 
                     // Use first 4 points for homography (quad)
-                    // Homography maps floor coords (flipped) to source coords
+                    // Homography maps floor coords (centered) to source coords
                     const srcPts = shard.transformedMaskPoints.slice(0, 4);
-                    const dstPtsFlipped = shard.maskPoints.slice(0, 4).map(p => flipY({
-                        x: p.x + floorOffsetX,
-                        y: p.y + floorOffsetY
-                    }));
+                    const dstPtsCentered = shard.maskPoints.slice(0, 4).map(toCentered);
 
-                    // Compute homography: flipped floor coords -> source coords
-                    const homography = computeHomography3x3(dstPtsFlipped, srcPts);
+                    // Compute homography: centered floor coords -> source coords
+                    const homography = computeHomography3x3(dstPtsCentered, srcPts);
 
                     if (index === 0) {
                         console.log(`Shard 0 homography:`, homography.elements);
                     }
 
-                    // Create geometry for the shard polygon (flipped Y)
+                    // Create geometry for the shard polygon (centered coords)
                     const shape = new THREE.Shape();
-                    const offsetMask = shard.maskPoints.map(p => flipY({
-                        x: p.x + floorOffsetX,
-                        y: p.y + floorOffsetY
-                    }));
-                    shape.moveTo(offsetMask[0].x, offsetMask[0].y);
-                    for (let i = 1; i < offsetMask.length; i++) {
-                        shape.lineTo(offsetMask[i].x, offsetMask[i].y);
+                    const centeredMask = shard.maskPoints.map(toCentered);
+                    shape.moveTo(centeredMask[0].x, centeredMask[0].y);
+                    for (let i = 1; i < centeredMask.length; i++) {
+                        shape.lineTo(centeredMask[i].x, centeredMask[i].y);
                     }
                     shape.closePath();
 
@@ -961,14 +945,12 @@
 
             // Floor grid
             gridHelper = new THREE.GridHelper(wallWidth * 2, 18, 0x333333, 0x222222);
+            gridHelper.visible = guiSettings.showGrid;
             boxGroup.add(gridHelper);
 
-            // Create floor with camera aspect ratio
-            // Camera space: ~2880 x 1800, aspect = 1.6 (8:5)
-            const cameraAspect = CAMERA_WIDTH / CAMERA_HEIGHT;
-            const floorW = wallWidth * 1.5;  // Make floor larger than box base
-            const floorD = floorW / cameraAspect;
-            const floorGeometry = new THREE.PlaneGeometry(floorW, floorD);
+            // Create square floor that fits inside the box
+            const floorSize = wallWidth;  // Square floor matching box width
+            const floorGeometry = new THREE.PlaneGeometry(floorSize, floorSize);
             const floorMaterial = new THREE.MeshBasicMaterial({
                 color: 0x333333,
                 side: THREE.DoubleSide
@@ -977,7 +959,7 @@
             floorMesh.rotation.x = -Math.PI / 2;  // Lay flat
             floorMesh.position.y = 0.01;  // Slightly above grid
             boxGroup.add(floorMesh);
-            console.log(`Floor: ${floorW.toFixed(2)} × ${floorD.toFixed(2)} (camera aspect ${cameraAspect.toFixed(2)})`);
+            console.log(`Floor: ${floorSize} × ${floorSize} (square)`);
 
             // Store wall references
             boxGroup.userData.walls = {
