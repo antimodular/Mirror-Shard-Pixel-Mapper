@@ -1294,14 +1294,7 @@ const SHARD_DATA = [
 // Image list for the dropdown
 const IMAGE_LIST = [
   "grid.jpg",
-  "grid-1.jpg",
-  "grid-2.jpg",
-  "grid-w.jpg",
-  "left.jpg",
-  "left-1.jpg",
-  "right.jpg",
-  "right-1.jpg",
-  "right-2.jpg",
-  "right-photo.jpg",
-  "right-w.jpg"
+  "a-thing-1.jpg",
+  "source_oath.jpg",
+  "test_source_4k_large_text.jpg"
 ];
