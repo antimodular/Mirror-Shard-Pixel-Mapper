@@ -291,17 +291,28 @@ function initWebGL() {
     const canvas = document.getElementById('canvas');
     canvas.width = DISPLAY_WIDTH;
     canvas.height = DISPLAY_HEIGHT;
-    
-    // Request WebGL context with stencil buffer
+
+    // Request WebGL2 context with stencil buffer
     gl = canvas.getContext('webgl2', {
         stencil: true,
         antialias: false,
         depth: false,
-        alpha: true
+        alpha: true,
+        preserveDrawingBuffer: true  // Helps with Safari compatibility
     });
+
     if (!gl) {
-        alert('WebGL 2.0 is not available');
+        console.error('WebGL 2.0 not available, trying WebGL 1.0...');
+        // Note: WebGL1 fallback would require different shaders
+        alert('WebGL 2.0 is not available. Please use a modern browser (Chrome, Firefox, Safari 15+, Edge).');
         return false;
+    }
+
+    // Check max texture size (Safari may have lower limits)
+    const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    console.log('Max texture size:', maxTextureSize);
+    if (maxTextureSize < DISPLAY_WIDTH || maxTextureSize < DISPLAY_HEIGHT) {
+        console.warn(`Canvas size ${DISPLAY_WIDTH}x${DISPLAY_HEIGHT} exceeds max texture size ${maxTextureSize}`);
     }
     
     // Verify stencil buffer is available
