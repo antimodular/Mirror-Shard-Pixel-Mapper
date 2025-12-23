@@ -22,6 +22,19 @@ window.loadCustomImage = async function(dataUrl) {
         return false;
     }
 };
+
+// Functions to control source transform from box3d.html
+window.setSourceScale = function(scale) {
+    sourceScale = scale;
+};
+window.setSourceOffset = function(x, y) {
+    sourceOffsetX = x;
+    sourceOffsetY = y;
+};
+window.getSourceTransform = function() {
+    return { scale: sourceScale, offsetX: sourceOffsetX, offsetY: sourceOffsetY };
+};
+
 let currentImage = null;
 let currentImagePath = IMAGE_PATH + 'source_oath.png';
 
